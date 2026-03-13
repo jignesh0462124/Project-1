@@ -19,6 +19,8 @@
     --color-shadow-light: rgba(0, 0, 0, 0.02);
     --color-primary-shadow: rgba(59, 130, 246, 0.2);
     --color-primary-shadow-light: rgba(59, 130, 246, 0.1);
+    
+    --color-button-text: 255 255 255; /* white text on light mode buttons (since they have dark backgrounds) */
   }
 
   .dark {
@@ -35,6 +37,8 @@
     --color-shadow-light: rgba(0, 0, 0, 0.2);
     --color-primary-shadow: rgba(59, 130, 246, 0.3);
     --color-primary-shadow-light: rgba(59, 130, 246, 0.2);
+
+    --color-button-text: 248 250 252; /* slate-50 */
   }
 }
 
@@ -97,7 +101,7 @@ body {
 .pixel-button--cyan {
   background: #2563eb;
   border-color: rgb(var(--color-primary));
-  color: white;
+  color: rgb(var(--color-button-text));
 }
 
 .pixel-button--cyan:hover {
@@ -108,7 +112,7 @@ body {
 .pixel-button--magenta {
   background: #7c3aed;
   border-color: rgb(var(--color-secondary));
-  color: white;
+  color: rgb(var(--color-button-text));
 }
 
 .pixel-button--magenta:hover {
@@ -119,7 +123,7 @@ body {
 .pixel-button--yellow {
   background: #d97706;
   border-color: rgb(var(--color-warning));
-  color: white;
+  color: rgb(var(--color-button-text));
 }
 
 .pixel-button--yellow:hover {

@@ -35,7 +35,7 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
         </div>
 
         {/* User Count */}
-        <div className="flex items-center gap-2 bg-retro-bg/50 px-3 py-1.5 rounded border border-retro-border/20">
+        <div className="flex items-center gap-2 bg-retro-bg px-3 py-1.5 rounded border border-retro-border/30">
           <Users className="w-3.5 h-3.5 text-retro-cyan opacity-80" />
           <span className="text-retro-text text-[10px] tracking-wider mt-0.5">
             {users.length}/4 <span className="opacity-60">PLAYERS</span>
@@ -43,14 +43,14 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
         </div>
 
         {/* Connection Status */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-retro-border/10 bg-retro-bg/30">
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded border border-retro-border/30 bg-retro-bg">
           <div className={`w-1.5 h-1.5 rounded-full ${
             isConnected 
               ? 'bg-emerald-400 shadow-[0_0_5px_#10b981]' 
               : 'bg-red-400 animate-pulse'
           }`}></div>
           <span className={`text-[9px] tracking-wider mt-0.5 ${
-            isConnected ? 'text-emerald-400' : 'text-red-400'
+            isConnected ? 'text-emerald-500 dark:text-emerald-400' : 'text-red-500 dark:text-red-400'
           }`}>
             {isConnected ? 'CONNECTED' : 'DISCONNECTED'}
           </span>

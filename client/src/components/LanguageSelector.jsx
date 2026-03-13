@@ -39,7 +39,7 @@ function LanguageSelector({ currentLanguage, onLanguageChange, languages }) {
                   w-full text-left px-4 py-3 text-[10px] tracking-wider transition-colors
                   ${currentLanguage === language.value 
                     ? 'bg-retro-cyan/10 border-l-2 border-retro-cyan text-retro-cyan font-bold' 
-                    : 'text-retro-text border-l-2 border-transparent hover:bg-retro-surface hover:text-white'
+                    : 'text-retro-text border-l-2 border-transparent hover:bg-retro-surface hover:text-retro-cyan'
                   }
                 `}
               >

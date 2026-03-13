@@ -116,7 +116,7 @@ function ChatPanel({ messages, onSendMessage, currentUser }) {
           <button
             type="submit"
             disabled={!newMessage.trim()}
-            className="pixel-button pixel-button--small flex items-center justify-center w-10 hover:bg-retro-cyan hover:border-retro-cyan hover:text-white transition-all disabled:opacity-50"
+            className="pixel-button pixel-button--small flex items-center justify-center w-10 hover:bg-retro-cyan hover:border-retro-cyan hover:text-retro-bg transition-all disabled:opacity-50"
           >
             <Send className="w-3.5 h-3.5" />
           </button>

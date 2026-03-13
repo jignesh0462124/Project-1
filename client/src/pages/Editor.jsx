@@ -414,6 +414,28 @@ function EditorPage() {
   const handleEditorDidMount = (editor, monaco) => {
     editorRef.current = editor
     
+    // Define custom light theme for better contrast
+    monaco.editor.defineTheme('retro-light', {
+      base: 'vs',
+      inherit: true,
+      rules: [
+        { token: '', foreground: '0f172a', background: 'f8fafc' }, // slate-900 on slate-50
+        { token: 'comment', foreground: '10b981', fontStyle: 'italic' }, // emerald-500
+        { token: 'keyword', foreground: '2563eb', fontStyle: 'bold' }, // blue-600
+        { token: 'string', foreground: 'd97706' }, // amber-600
+        { token: 'number', foreground: '7c3aed' }, // violet-600
+        { token: 'identifier', foreground: '0f172a' },
+      ],
+      colors: {
+        'editor.background': '#f8fafc', // match --color-bg
+        'editor.foreground': '#0f172a',
+        'editor.lineHighlightBackground': '#f1f5f9', // slate-100
+        'editorCursor.foreground': '#3b82f6',
+        'editor.selectionBackground': '#bfdbfe', // blue-200
+        'editorLineNumber.foreground': '#94a3b8',
+      }
+    });
+    
     // Set up cursor position change listener
     editor.onDidChangeCursorPosition(handleCursorPositionChange)
     
@@ -430,13 +452,13 @@ function EditorPage() {
     })
 
     // Set initial theme
-    monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs')
+    monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'retro-light')
   }
 
   // Update monaco theme when context theme changes
   useEffect(() => {
     if (editorRef.current && window.monaco) {
-      window.monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'vs')
+      window.monaco.editor.setTheme(theme === 'dark' ? 'vs-dark' : 'retro-light')
     }
   }, [theme])
 

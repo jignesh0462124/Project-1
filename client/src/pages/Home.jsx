@@ -175,7 +175,7 @@ function Home() {
                     >
                       {lang.label}
                       {selectedLanguage === lang.value && (
-                        <span className="float-right bg-retro-cyan text-white w-3 h-3 flex items-center justify-center rounded-sm text-[8px]">✓</span>
+                        <span className="float-right bg-retro-cyan text-retro-bg w-3 h-3 flex items-center justify-center rounded-sm text-[8px]">✓</span>
                       )}
                     </button>
                   ))}

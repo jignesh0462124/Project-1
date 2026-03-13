@@ -56,14 +56,14 @@ function AnalysisPanel({ analysis, isAnalyzing, onClear }) {
                 // Headers
                 if (line.startsWith('## ')) {
                   return (
-                    <h3 key={i} className="text-violet-400 text-[11px] font-bold uppercase tracking-wider mt-4 mb-2 border-b border-retro-border/30 pb-1">
+                    <h3 key={i} className="text-violet-600 dark:text-violet-400 text-[11px] font-bold uppercase tracking-wider mt-4 mb-2 border-b border-retro-border/30 pb-1">
                       {line.replace('## ', '')}
                     </h3>
                   )
                 }
                 if (line.startsWith('### ')) {
                   return (
-                    <h4 key={i} className="text-retro-cyan text-[10px] font-bold uppercase tracking-wider mt-3 mb-1">
+                    <h4 key={i} className="text-blue-600 dark:text-retro-cyan text-[10px] font-bold uppercase tracking-wider mt-3 mb-1">
                       {line.replace('### ', '')}
                     </h4>
                   )
