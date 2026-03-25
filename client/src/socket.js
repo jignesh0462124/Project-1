@@ -6,6 +6,9 @@ class SocketService {
   constructor() {
     this.socket = null;
     this.connected = false;
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 5;
+    this.reconnectDelay = 1000;
   }
 
   connect() {
@@ -13,15 +16,25 @@ class SocketService {
       return this.socket;
     }
 
+    if (this.socket) {
+      this.socket.connect()
+      return this.socket
+    }
+
     this.socket = io(SOCKET_URL, {
       transports: ['websocket', 'polling'],
       upgrade: true,
       rememberUpgrade: true,
+      reconnection: true,
+      reconnectionAttempts: this.maxReconnectAttempts,
+      reconnectionDelay: this.reconnectDelay,
+      reconnectionDelayMax: 5000,
     });
 
     this.socket.on('connect', () => {
       console.log('🔗 Connected to server:', this.socket.id);
       this.connected = true;
+      this.reconnectAttempts = 0;
     });
 
     this.socket.on('disconnect', (reason) => {
@@ -32,6 +45,17 @@ class SocketService {
     this.socket.on('connect_error', (error) => {
       console.error('❌ Connection error:', error);
       this.connected = false;
+      this.reconnectAttempts++;
+    });
+
+    this.socket.on('reconnect', (attemptNumber) => {
+      console.log('🔄 Reconnected to server after', attemptNumber, 'attempts');
+      this.connected = true;
+      this.reconnectAttempts = 0;
+    });
+
+    this.socket.on('reconnect_failed', () => {
+      console.error('❌ Failed to reconnect after', this.maxReconnectAttempts, 'attempts');
     });
 
     return this.socket;
@@ -42,6 +66,7 @@ class SocketService {
       this.socket.disconnect();
       this.socket = null;
       this.connected = false;
+      this.reconnectAttempts = 0;
     }
   }
 

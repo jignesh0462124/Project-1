@@ -45,7 +45,7 @@ const io = socketIo(server, {
   }
 });
 
-// Room storage: rooms[roomId] = { users: [], code: "", language: "javascript" }
+// Room storage: rooms[roomId] = { users: [], code: "", language: "javascript", cleanupTimeout: null }
 const rooms = new Map();
 
 // User colors for cursor identification
@@ -156,14 +156,20 @@ io.on('connection', (socket) => {
   });
 
   // Handle language changes
-  socket.on('language-change', ({ roomId, language }) => {
+  socket.on('language-change', ({ roomId, language, code }) => {
     if (!rooms.has(roomId)) return;
 
     const room = rooms.get(roomId);
     room.language = language;
+    if (code !== undefined) {
+      room.code = code;
+    }
     
     // Broadcast to all users in the room (including sender for consistency)
-    io.to(roomId).emit('language-updated', { language });
+    io.to(roomId).emit('language-updated', { 
+      language,
+      code: code !== undefined ? code : room.code
+    });
     console.log(`🔧 Language changed to ${language} in room ${roomId} by ${socket.username}`);
   });
 
@@ -263,10 +269,23 @@ io.on('connection', (socket) => {
       room.users.splice(userIndex, 1);
       socket.leave(roomId);
 
-      // If room is empty, delete it
+      // Clear any pending cleanup timeout
+      if (room.cleanupTimeout) {
+        clearTimeout(room.cleanupTimeout);
+        room.cleanupTimeout = null;
+      }
+
+      // If room is empty, schedule deletion after timeout (allows quick rejoin)
       if (room.users.length === 0) {
-        rooms.delete(roomId);
-        console.log(`🗑️ Deleted empty room: ${roomId}`);
+        room.cleanupTimeout = setTimeout(() => {
+          if (rooms.has(roomId)) {
+            const currentRoom = rooms.get(roomId);
+            if (currentRoom.users.length === 0) {
+              rooms.delete(roomId);
+              console.log(`🗑️ Deleted empty room: ${roomId} after timeout`);
+            }
+          }
+        }, 60000); // 1 minute timeout before room cleanup
       } else {
         // If the host left, make the first remaining user the new host
         if (userIndex === 0 && room.users.length > 0) {
@@ -342,29 +361,71 @@ app.post('/api/execute', async (req, res) => {
 
     const result = response.data;
 
-    // JDoodle returns { output, statusCode, memory, cpuTime }
+    // JDoodle returns { output, statusCode, memory, cpuTime, error }
     // Map to our standard format
     const isError = result.statusCode !== 200;
-    const status = isError
-      ? { id: 11, description: 'Runtime Error' }
-      : { id: 3, description: 'Accepted' };
+    const isTimeLimit = result.statusCode === 139 || result.cpuTime > 15;
+    const isMemoryLimit = result.memory && result.memory > 256000;
+    
+    let status;
+    if (isTimeLimit) {
+      status = { id: 5, description: 'Time Limit Exceeded (>15s)' };
+    } else if (isMemoryLimit) {
+      status = { id: 8, description: 'Memory Limit Exceeded' };
+    } else if (isError) {
+      status = { id: 11, description: 'Runtime Error' };
+    } else {
+      status = { id: 3, description: 'Accepted' };
+    }
 
     res.json({
-      stdout: isError ? null : (result.output || null),
-      stderr: isError ? (result.output || null) : null,
+      stdout: isError || isTimeLimit || isMemoryLimit ? null : (result.output || null),
+      stderr: (isError && !isTimeLimit && !isMemoryLimit) ? (result.output || result.error || null) : null,
       compile_output: null,
       status,
       memory: result.memory,
       cpuTime: result.cpuTime,
+      error: result.error || (isTimeLimit ? 'Execution time exceeded 15 seconds limit' : null),
     });
   } catch (err) {
-    console.error('\u274c Code execution error:', err.message);
-    if (err.response) {
-      return res.status(err.response.status).json({
-        error: 'JDoodle API error',
-        details: err.response.data,
+    console.error('❌ Code execution error:', err.message);
+    
+    if (err.code === 'ECONNABORTED') {
+      return res.status(408).json({
+        error: 'Request Timeout',
+        details: 'Code execution took too long (>30s). Try optimizing your code.',
+        status: { id: 5, description: 'Time Limit Exceeded' },
       });
     }
+    
+    if (err.response) {
+      const status = err.response.status;
+      const data = err.response.data;
+      
+      // JDoodle specific errors
+      if (data && data.error) {
+        return res.status(status).json({
+          error: 'JDoodle API Error',
+          details: data.error,
+        });
+      }
+      
+      // Rate limit or other HTTP errors
+      if (status === 429) {
+        return res.status(429).json({
+          error: 'Rate Limit Exceeded',
+          details: 'Too many requests. Please wait a moment before running code again.',
+        });
+      }
+      
+      return res.status(status).json({
+        error: 'JDoodle API error',
+        details: data,
+      });
+    }
+    
+    res.status(500).json({ error: 'Code execution failed', details: err.message });
+  }
     res.status(500).json({ error: 'Code execution failed', details: err.message });
   }
 });

@@ -23,7 +23,7 @@ function UserList({ users, currentUser, isHost, onPauseUser, onUnpauseUser }) {
       </h3>
       
       <div className="space-y-2">
-        {users.map((user, index) => {
+        {users.map((user) => {
           const isCurrentUser = user.username === currentUser
           
           return (

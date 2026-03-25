@@ -1,44 +1,57 @@
 /* Global Professional Theme Styles */
 @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    --color-bg: 248 250 252;         /* slate-50 */
-    --color-surface: 255 255 255;     /* white */
-    --color-panel: 241 245 249;       /* slate-100 */
-    --color-border: 203 213 225;      /* slate-300 */
-    --color-primary: 59 130 246;      /* blue-500 */
-    --color-text: 15 23 42;           /* slate-900 */
-    --color-secondary: 139 92 246;    /* violet-500 */
-    --color-warning: 245 158 11;      /* amber-500 */
+    --color-bg: 248 250 252;
+    --color-surface: 255 255 255;
+    --color-panel: 241 245 249;
+    --color-border: 203 213 225;
+    --color-primary: 37 99 235;
+    --color-text: 30 41 59;
+    --color-secondary: 124 58 237;
+    --color-warning: 245 158 11;
+    --color-success: 16 185 129;
     
-    --color-shadow: rgba(0, 0, 0, 0.05);
-    --color-shadow-light: rgba(0, 0, 0, 0.02);
-    --color-primary-shadow: rgba(59, 130, 246, 0.2);
-    --color-primary-shadow-light: rgba(59, 130, 246, 0.1);
+    --color-shadow: rgba(0, 0, 0, 0.1);
+    --color-shadow-light: rgba(0, 0, 0, 0.05);
+    --color-primary-shadow: rgba(37, 99, 235, 0.2);
+    --color-primary-shadow-light: rgba(37, 99, 235, 0.1);
     
-    --color-button-text: 255 255 255; /* white text on light mode buttons (since they have dark backgrounds) */
+    --color-button-text: 255 255 255;
+    --color-text-secondary: 100 116 139;
+    --color-text-muted: 148 163 184;
+    
+    --color-bg-gradient-start: rgba(59, 130, 246, 0.05);
+    --color-bg-gradient-end: rgba(139, 92, 246, 0.05);
   }
 
   .dark {
-    --color-bg: 15 23 42;             /* slate-900 */
-    --color-surface: 30 41 59;        /* slate-800 */
-    --color-panel: 51 65 85;          /* slate-700 */
-    --color-border: 71 85 105;        /* slate-600 */
-    --color-primary: 59 130 246;      /* blue-500 */
-    --color-text: 248 250 252;        /* slate-50 */
-    --color-secondary: 139 92 246;    /* violet-500 */
-    --color-warning: 245 158 11;      /* amber-500 */
+    --color-bg: 15 23 42;
+    --color-surface: 30 41 59;
+    --color-panel: 51 65 85;
+    --color-border: 71 85 105;
+    --color-primary: 59 130 246;
+    --color-text: 248 250 252;
+    --color-secondary: 139 92 246;
+    --color-warning: 245 158 11;
+    --color-success: 16 185 129;
     
     --color-shadow: rgba(0, 0, 0, 0.3);
     --color-shadow-light: rgba(0, 0, 0, 0.2);
     --color-primary-shadow: rgba(59, 130, 246, 0.3);
     --color-primary-shadow-light: rgba(59, 130, 246, 0.2);
 
-    --color-button-text: 248 250 252; /* slate-50 */
+    --color-button-text: 248 250 252;
+    --color-text-secondary: 203 213 225;
+    --color-text-muted: 148 163 184;
+    
+    --color-bg-gradient-start: rgba(59, 130, 246, 0.1);
+    --color-bg-gradient-end: rgba(139, 92, 246, 0.1);
   }
 }
 
@@ -46,10 +59,14 @@
   box-sizing: border-box;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   font-family: 'Press Start 2P', cursive;
-  font-size: 8px;
-  line-height: 1.8;
+  font-size: 10px;
+  line-height: 2;
   background-color: rgb(var(--color-bg));
   color: rgb(var(--color-text));
   margin: 0;
@@ -60,27 +77,124 @@ body {
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
+/* Smooth animations */
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 5px currentColor;
+  }
+  50% {
+    box-shadow: 0 0 20px currentColor, 0 0 30px currentColor;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2s ease-in-out infinite;
+}
+
+.animate-slide-down {
+  animation: slide-down 0.3s ease-out;
+}
+
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.2s ease-out;
+}
+
 /* Professional Button Styles */
 .pixel-button {
   font-family: 'Press Start 2P', cursive;
-  font-size: 8px;
+  font-size: 9px;
   background: rgb(var(--color-surface));
   color: rgb(var(--color-text));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 4px;
-  padding: 10px 16px;
+  border: 2px solid rgb(var(--color-border));
+  border-radius: 6px;
+  padding: 12px 20px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-align: center;
   text-transform: uppercase;
-  box-shadow: 0 1px 2px var(--color-shadow);
+  box-shadow: 0 2px 4px var(--color-shadow), 0 1px 2px var(--color-shadow-light);
+  position: relative;
+  overflow: hidden;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.pixel-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.1),
+    transparent
+  );
+  transition: left 0.5s ease;
+}
+
+.pixel-button:hover::before {
+  left: 100%;
 }
 
 .pixel-button:hover {
   background: rgb(var(--color-panel));
-  border-color: rgb(var(--color-border));
-  transform: translateY(-1px);
-  box-shadow: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow-light);
+  border-color: rgb(var(--color-primary));
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow-light), 0 0 20px var(--color-primary-shadow-light);
 }
 
 .pixel-button:active {
@@ -99,60 +213,72 @@ body {
 
 /* Button Variants */
 .pixel-button--cyan {
-  background: #2563eb;
-  border-color: rgb(var(--color-primary));
-  color: rgb(var(--color-button-text));
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  border-color: #3b82f6;
+  color: white;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
 }
 
 .pixel-button--cyan:hover {
-  background: #1d4ed8;
-  border-color: #2563eb;
+  background: linear-gradient(135deg, #60a5fa 0%, #3b82f6 100%);
+  border-color: #60a5fa;
+  box-shadow: 0 4px 16px rgba(59, 130, 246, 0.4);
 }
 
 .pixel-button--magenta {
-  background: #7c3aed;
-  border-color: rgb(var(--color-secondary));
-  color: rgb(var(--color-button-text));
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  border-color: #8b5cf6;
+  color: white;
+  box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
 }
 
 .pixel-button--magenta:hover {
-  background: #6d28d9;
-  border-color: #7c3aed;
+  background: linear-gradient(135deg, #a78bfa 0%, #8b5cf6 100%);
+  border-color: #a78bfa;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
 }
 
 .pixel-button--yellow {
-  background: #d97706;
-  border-color: rgb(var(--color-warning));
-  color: rgb(var(--color-button-text));
+  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  border-color: #f59e0b;
+  color: white;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
 }
 
 .pixel-button--yellow:hover {
-  background: #b45309;
-  border-color: #d97706;
+  background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+  border-color: #fbbf24;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4);
 }
 
 .pixel-button--small {
-  padding: 6px 12px;
-  font-size: 8px;
+  padding: 8px 12px;
+  font-size: 7px;
 }
 
 /* Professional Input Styles */
 .pixel-input {
   font-family: 'Press Start 2P', cursive;
-  font-size: 8px;
+  font-size: 10px;
   background: rgb(var(--color-bg));
   color: rgb(var(--color-text));
-  border: 1px solid rgb(var(--color-border));
-  border-radius: 4px;
-  padding: 10px 14px;
+  border: 2px solid rgb(var(--color-border));
+  border-radius: 6px;
+  padding: 12px 16px;
   outline: none;
-  transition: all 0.2s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   width: 100%;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+
+.pixel-input::placeholder {
+  color: rgb(var(--color-text-muted));
 }
 
 .pixel-input:focus {
   border-color: rgb(var(--color-primary));
-  box-shadow: 0 0 0 2px var(--color-primary-shadow-light);
+  box-shadow: 0 0 0 3px var(--color-primary-shadow-light), 0 2px 8px var(--color-shadow);
   background: rgb(var(--color-surface));
 }
 
@@ -163,11 +289,20 @@ body {
 /* Professional Panel Styles */
 .pixel-panel {
   background: rgb(var(--color-surface));
-  border: 1px solid rgb(var(--color-panel));
-  border-radius: 8px;
-  padding: 24px;
-  box-shadow: 0 4px 6px -1px var(--color-shadow), 0 2px 4px -1px var(--color-shadow-light);
-  transition: background-color 0.3s ease, border-color 0.3s ease;
+  border: 2px solid rgb(var(--color-border));
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 4px 12px var(--color-shadow), 0 2px 6px var(--color-shadow-light);
+  transition: background-color 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.pixel-panel:hover {
+  box-shadow: 0 8px 24px var(--color-shadow), 0 4px 8px var(--color-shadow-light);
+  border-color: rgb(var(--color-primary));
+}
+
+.pixel-panel:hover {
+  box-shadow: 0 8px 16px -2px var(--color-shadow), 0 4px 6px -2px var(--color-shadow-light);
 }
 
 .pixel-panel--dark {
@@ -189,7 +324,7 @@ body {
   51%, 100% { opacity: 0; }
 }
 
-/* User Color Classes (Mapped to Professional Palette) */
+/* User Color Classes */
 .user-green { color: #10b981; }
 .user-cyan { color: #3b82f6; }
 .user-yellow { color: #f59e0b; }
@@ -210,54 +345,79 @@ body {
 .shadow-user-yellow { box-shadow: 0 4px 6px -1px rgba(245, 158, 11, 0.2); }
 .shadow-user-magenta { box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.2); }
 
-/* Toast Notifications - Professional Override */
+/* Toast Notifications */
 .toast-pixel {
   font-family: 'Press Start 2P', cursive !important;
   font-size: 8px !important;
   border: 1px solid rgb(var(--color-border)) !important;
-  border-radius: 6px !important;
+  border-radius: 8px !important;
   background: rgb(var(--color-surface)) !important;
   color: rgb(var(--color-text)) !important;
-  box-shadow: 0 10px 15px -3px var(--color-shadow), 0 4px 6px -2px var(--color-shadow-light) !important;
-  padding: 12px 16px !important;
+  box-shadow: 0 10px 25px -3px var(--color-shadow), 0 4px 6px -2px var(--color-shadow-light) !important;
+  padding: 14px 18px !important;
+  animation: scale-in 0.2s ease-out !important;
 }
 
 .toast-pixel--error {
   border-left: 4px solid #ef4444 !important;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.1) 0%, rgb(var(--color-surface)) 100%) !important;
 }
 
 .toast-pixel--success {
   border-left: 4px solid #10b981 !important;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgb(var(--color-surface)) 100%) !important;
 }
 
 .toast-pixel--info {
   border-left: 4px solid rgb(var(--color-primary)) !important;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgb(var(--color-surface)) 100%) !important;
 }
 
-/* Scrollbar Styling - Sleek */
+/* Scrollbar Styling */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
   background: rgb(var(--color-bg));
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
   background: rgb(var(--color-border));
-  border-radius: 3px;
+  border-radius: 4px;
+  transition: background 0.2s ease;
 }
 
 ::-webkit-scrollbar-thumb:hover {
   background: rgb(var(--color-panel));
 }
 
+/* Custom scrollbar for overflow containers */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-border));
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-panel));
+}
+
 /* Monaco Editor Container */
 .monaco-editor-container {
-  border: 1px solid rgb(var(--color-panel)) !important;
-  border-radius: 4px;
+  border: none !important;
+  border-radius: 0;
   overflow: hidden;
+  transition: all 0.3s ease;
 }
 
 /* Selection and focus utilities */
@@ -269,19 +429,45 @@ body {
   outline: none;
 }
 
+/* Keyboard shortcuts styling */
+kbd {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  padding: 4px 8px;
+  background: rgb(var(--color-bg));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 4px;
+  box-shadow: 0 2px 0 rgb(var(--color-border));
+}
+
 /* Responsive utilities */
 @media (max-width: 768px) {
   body {
-    font-size: 6px;
+    font-size: 8px;
   }
   
   .pixel-button {
-    font-size: 6px;
-    padding: 8px 12px;
+    font-size: 8px;
+    padding: 10px 16px;
   }
   
   .pixel-input {
-    font-size: 6px;
-    padding: 8px 10px;
+    font-size: 8px;
+    padding: 10px 14px;
   }
+}
+
+/* Glass morphism effect */
+.glass {
+  background: rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 50%, #ec4899 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
