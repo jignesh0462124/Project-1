@@ -1,108 +1,69 @@
-import { useState } from 'react'
-
 function AnalysisPanel({ analysis, isAnalyzing, onClear }) {
-  const [isCollapsed, setIsCollapsed] = useState(false)
+  const normalizedAnalysis = typeof analysis === 'string' ? analysis : analysis?.error || ''
 
   return (
-    <div className="bg-retro-surface border-t-2 border-retro-border flex flex-col" style={{ minHeight: isCollapsed ? 'auto' : '140px', maxHeight: '350px' }}>
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-retro-border bg-retro-panel">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => setIsCollapsed(!isCollapsed)}
-            className="text-retro-text opacity-60 hover:opacity-100 transition-opacity text-[10px] tracking-wider uppercase font-bold"
-          >
-            {isCollapsed ? '▶' : '▼'} AI ANALYSIS
-          </button>
-          {isAnalyzing && (
-            <>
-              <span className="text-amber-400 text-[9px] tracking-wider uppercase font-bold">ANALYZING...</span>
-              <div className="w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></div>
-            </>
-          )}
-          {!isAnalyzing && analysis && (
-            <span className="text-violet-400 text-[9px] tracking-wider uppercase font-bold">COMPLETE</span>
-          )}
+    <div className="flex h-full min-h-0 flex-col bg-retro-surface">
+      <div className="flex items-center justify-between border-b border-retro-border px-4 py-3">
+        <div>
+          <h3 className="ui-label text-retro-text">AI Analysis</h3>
+          <div className="mt-1 font-mono-ui text-xs font-semibold text-retro-accent">
+            {isAnalyzing ? 'Analyzing...' : analysis ? 'Complete' : 'Idle'}
+          </div>
         </div>
-        <button
-          onClick={onClear}
-          className="pixel-button pixel-button--small text-[8px] opacity-70 hover:opacity-100"
-          disabled={isAnalyzing}
-        >
-          CLEAR
+        <button onClick={onClear} className="btn btn-ghost" disabled={isAnalyzing}>
+          Clear
         </button>
       </div>
 
-      {/* Body */}
-      {!isCollapsed && (
-        <div className="flex-1 overflow-auto p-4 font-mono text-xs leading-relaxed" style={{ fontFamily: '"JetBrains Mono", "Fira Code", "Courier New", monospace', fontSize: '11px' }}>
-          {isAnalyzing && (
-            <div className="text-retro-text opacity-50 flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-violet-400 animate-pulse"></div>
-              Gemini is analyzing your code...
-            </div>
-          )}
+      <div className="custom-scrollbar flex-1 overflow-auto p-4">
+        {isAnalyzing && (
+          <div className="flex items-center gap-2 text-sm text-[var(--text-dim)]">
+            <span className="h-2 w-2 rounded-full bg-retro-accent typing-dot" />
+            Reviewing the current file and latest compiler output...
+          </div>
+        )}
 
-          {!isAnalyzing && !analysis && (
-            <div className="text-retro-text opacity-30 text-[10px] tracking-wider uppercase">
-              Click 🔍 ANALYZE to get AI-powered feedback on your code.
-            </div>
-          )}
+        {!isAnalyzing && !analysis && (
+          <div className="text-sm text-[var(--text-dim)]">Run Analyze to get feedback on the current file.</div>
+        )}
 
-          {!isAnalyzing && analysis && (
-            <div className="text-retro-text prose-sm">
-              {/* Render markdown-like analysis */}
-              {analysis.split('\n').map((line, i) => {
-                // Headers
-                if (line.startsWith('## ')) {
-                  return (
-                    <h3 key={i} className="text-violet-600 dark:text-violet-400 text-[11px] font-bold uppercase tracking-wider mt-4 mb-2 border-b border-retro-border/30 pb-1">
-                      {line.replace('## ', '')}
-                    </h3>
-                  )
-                }
-                if (line.startsWith('### ')) {
-                  return (
-                    <h4 key={i} className="text-blue-600 dark:text-retro-cyan text-[10px] font-bold uppercase tracking-wider mt-3 mb-1">
-                      {line.replace('### ', '')}
-                    </h4>
-                  )
-                }
-                // Code blocks
-                if (line.startsWith('```')) {
-                  return null // Skip code fence markers
-                }
-                // Bullet points
-                if (line.startsWith('- ') || line.startsWith('* ')) {
-                  return (
-                    <div key={i} className="text-retro-text pl-3 py-0.5 flex gap-2">
-                      <span className="text-retro-cyan opacity-60">•</span>
-                      <span>{line.replace(/^[-*] /, '')}</span>
-                    </div>
-                  )
-                }
-                // Empty lines
-                if (line.trim() === '') {
-                  return <div key={i} className="h-2"></div>
-                }
-                // Regular text
+        {!isAnalyzing && normalizedAnalysis && (
+          <div className="space-y-1 text-sm leading-6 text-retro-text">
+            {normalizedAnalysis.split('\n').map((line, index) => {
+              if (line.startsWith('## ')) {
                 return (
-                  <div key={i} className="text-retro-text py-0.5 opacity-90">
-                    {line}
+                  <h4 key={index} className="ui-label mt-5 border-b border-retro-border pb-2 text-retro-accent first:mt-0">
+                    {line.replace('## ', '')}
+                  </h4>
+                )
+              }
+
+              if (line.startsWith('### ')) {
+                return (
+                  <h5 key={index} className="ui-label mt-4 text-retro-cyan">
+                    {line.replace('### ', '')}
+                  </h5>
+                )
+              }
+
+              if (line.startsWith('```')) return null
+
+              if (line.startsWith('- ') || line.startsWith('* ')) {
+                return (
+                  <div key={index} className="flex gap-2 py-1">
+                    <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-retro-accent" />
+                    <span>{line.replace(/^[-*] /, '')}</span>
                   </div>
                 )
-              })}
-            </div>
-          )}
+              }
 
-          {/* Error display */}
-          {!isAnalyzing && analysis && typeof analysis === 'object' && analysis.error && (
-            <div className="text-red-400 bg-red-950/20 rounded p-3 border border-red-900/30">
-              {analysis.error}
-            </div>
-          )}
-        </div>
-      )}
+              if (!line.trim()) return <div key={index} className="h-2" />
+
+              return <p key={index}>{line}</p>
+            })}
+          </div>
+        )}
+      </div>
     </div>
   )
 }

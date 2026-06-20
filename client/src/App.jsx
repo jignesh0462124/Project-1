@@ -16,9 +16,9 @@ function App() {
           <Route path="/" element={<Home />} />
           <Route path="/room/:roomId" element={<Editor />} />
         </Routes>
-        
-        <Toaster 
-          position="top-center"
+
+        <Toaster
+          position="bottom-right"
           toastOptions={{
             className: 'toast-pixel',
             duration: 4000,

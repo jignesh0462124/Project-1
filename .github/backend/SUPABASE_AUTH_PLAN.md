@@ -1,7 +1,7 @@
 # Supabase Authentication & Database Integration Plan
 
-> **Project:** Collaborative Platform — Real-time Code Editor  
-> **Status:** 📋 Planning Phase  
+> **Project:** Collaborative Platform — Real-time Code Editor
+> **Status:** 📋 Planning Phase
 > **Last Updated:** June 2026
 
 ---

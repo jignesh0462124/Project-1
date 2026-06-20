@@ -7,19 +7,14 @@ function ThemeToggle() {
   return (
     <button
       onClick={toggleTheme}
-      className={`
-        pixel-button pixel-button--small flex items-center justify-center w-10 h-10 rounded-full transition-all duration-300
-        ${theme === 'dark' 
-          ? 'bg-retro-surface border-2 border-retro-border hover:border-retro-cyan hover:bg-retro-cyan/10' 
-          : 'bg-white border-2 border-slate-300 hover:border-blue-500 hover:bg-blue-50 shadow-sm'
-        }
-      `}
+      className="icon-button group h-10 min-h-10 w-10 min-w-10 rounded"
       title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+      aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
     >
       {theme === 'light' ? (
-        <Moon className={`w-5 h-5 ${theme === 'light' ? 'text-slate-700' : 'text-retro-text'} opacity-70 group-hover:opacity-100 transition-colors`} />
+        <Moon className="h-5 w-5 text-retro-text opacity-70 transition-colors group-hover:opacity-100" />
       ) : (
-        <Sun className={`w-5 h-5 ${theme === 'dark' ? 'text-amber-400' : 'text-retro-text'} opacity-70 group-hover:opacity-100 transition-colors`} />
+        <Sun className="h-5 w-5 text-retro-yellow opacity-80 transition-colors group-hover:opacity-100" />
       )}
     </button>
   )

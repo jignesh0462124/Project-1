@@ -1,135 +1,118 @@
-import { Crown, User, Pause, Play } from 'lucide-react'
+import { Crown, Pause, Play, UserPlus, X } from 'lucide-react'
 
-function UserList({ users, currentUser, isHost, onPauseUser, onUnpauseUser }) {
+function UserList({ users, currentUser, currentUserId, isHost, onPauseUser, onUnpauseUser, onKickUser, onTransferOwnership, compact = false }) {
   if (!users || users.length === 0) {
     return (
-      <div className="h-full flex flex-col">
-        <h3 className="text-retro-text text-[10px] mb-3 uppercase flex items-center gap-2 opacity-70 tracking-widest pl-1">
-          <User className="w-3.5 h-3.5" />
-          PLAYERS <span className="opacity-50">(0/4)</span>
-        </h3>
-        <div className="text-retro-text text-[10px] opacity-40 text-center py-4 border border-dashed border-retro-border/20 rounded">
-          NO PLAYERS CONNECTED
+      <div className="flex h-full flex-col">
+        <div className="ui-label mb-3 flex items-center justify-between">
+          <span>Players</span>
+          <span>0/4</span>
+        </div>
+        <div className="rounded border border-dashed border-retro-border bg-[var(--surface-raised)] px-3 py-4 text-center text-xs text-[var(--text-dim)]">
+          No players connected.
         </div>
       </div>
     )
   }
 
   return (
-    <div className="flex flex-col h-full">
-      <h3 className="text-retro-text text-[10px] mb-3 uppercase flex items-center gap-2 opacity-70 tracking-widest pl-1">
-        <User className="w-3.5 h-3.5" />
-        PLAYERS <span className="opacity-50">({users.length}/4)</span>
-      </h3>
-      
+    <div className="flex h-full flex-col">
+      <div className="ui-label mb-3 flex items-center justify-between">
+        <span>Players</span>
+        <span>{users.length}/4</span>
+      </div>
+
       <div className="space-y-2">
         {users.map((user) => {
-          const isCurrentUser = user.username === currentUser
-          
+          const isCurrentUser = currentUserId ? user.id === currentUserId : user.username === currentUser
+          const isOwner = user.role === 'owner' || user.isHost
+          const color = user.isPaused ? 'var(--muted)' : user.color || 'var(--accent)'
+
           return (
             <div
               key={user.id || user.username}
-              className={`
-                flex items-center gap-3 p-2.5 rounded border transition-all duration-200
-                ${user.isPaused
-                  ? 'border-red-500/30 bg-red-500/5 opacity-70'
-                  : isCurrentUser 
-                    ? 'border-retro-cyan/50 bg-retro-cyan/5' 
-                    : 'border-transparent hover:border-retro-border/30 hover:bg-retro-surface/50'
-                }
-              `}
+              className={`rounded border bg-[var(--surface-raised)] p-3 transition-colors ${
+                isCurrentUser
+                  ? 'border-retro-cyan shadow-[2px_2px_0_0_var(--accent)]'
+                  : 'border-retro-border hover:border-[var(--line-strong)]'
+              } ${user.isPaused ? 'opacity-60' : ''}`}
             >
-              {/* User Color Indicator */}
-              <div 
-                className="w-3 h-3 rounded-full flex-shrink-0 shadow-sm"
-                style={{ 
-                  backgroundColor: user.isPaused ? '#6b7280' : (user.color || '#3b82f6'),
-                  boxShadow: user.isPaused ? 'none' : `0 0 8px ${user.color || '#3b82f6'}40`
-                }}
-              ></div>
+              <div className="flex items-start gap-3">
+                <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: color }} />
 
-              {/* Username and Status */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span 
-                    className={`text-[10px] truncate ${isCurrentUser ? 'font-bold' : ''}`}
-                    style={{ color: user.isPaused ? '#6b7280' : (isCurrentUser ? (user.color || '#3b82f6') : '#f8fafc') }}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="truncate font-mono-ui text-xs font-semibold text-retro-text">{user.username}</span>
+                    {isOwner && <Crown className="h-3.5 w-3.5 text-retro-accent" />}
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {isOwner ? (
+                      <span className="rounded bg-[var(--accent-2-dim)] px-1.5 py-0.5 font-mono-ui text-[10px] font-semibold uppercase tracking-[0.06em] text-retro-accent">
+                        Owner
+                      </span>
+                    ) : (
+                      <span className="rounded border border-retro-border px-1.5 py-0.5 font-mono-ui text-[10px] uppercase tracking-[0.06em] text-[var(--text-dim)]">
+                        Member
+                      </span>
+                    )}
+                    {isCurrentUser && (
+                      <span className="rounded bg-[var(--surface-hover)] px-1.5 py-0.5 font-mono-ui text-[10px] uppercase tracking-[0.06em] text-retro-text">
+                        You
+                      </span>
+                    )}
+                    {user.isPaused && (
+                      <span className="rounded border border-[var(--danger)] px-1.5 py-0.5 font-mono-ui text-[10px] uppercase tracking-[0.06em] text-[var(--danger)]">
+                        Paused
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-2 flex items-center gap-1.5 font-mono-ui text-[11px] text-[var(--muted)]">
+                    <span>typing</span>
+                    <span className="flex gap-0.5">
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                      <span className="typing-dot">.</span>
+                    </span>
+                  </div>
+                </div>
+
+                {!isOwner && isHost && !isCurrentUser && (
+                  <button
+                    onClick={() => (user.isPaused ? onUnpauseUser(user.username) : onPauseUser(user.username))}
+                    className="icon-button h-8 min-h-8 w-8 min-w-8"
+                    title={user.isPaused ? `Unpause ${user.username}` : `Pause ${user.username}`}
                   >
-                    {user.username}
-                  </span>
-                  {user.isHost && (
-                    <Crown className="w-3 h-3 text-retro-yellow flex-shrink-0 opacity-80" />
-                  )}
-                </div>
-                
-                {/* User badges */}
-                <div className="flex items-center gap-1.5 mt-1.5 focus:outline-none">
-                  {user.isHost && (
-                    <span className="text-retro-yellow text-[8px] uppercase tracking-wider bg-retro-yellow/10 px-1.5 py-0.5 rounded">
-                      OWNER
-                    </span>
-                  )}
-                  {isCurrentUser && (
-                    <span className="text-retro-cyan text-[8px] uppercase tracking-wider bg-retro-cyan/10 px-1.5 py-0.5 rounded">
-                      YOU
-                    </span>
-                  )}
-                  {user.isPaused && (
-                    <span className="text-red-400 text-[8px] uppercase tracking-wider bg-red-400/10 px-1.5 py-0.5 rounded animate-pulse">
-                      PAUSED
-                    </span>
-                  )}
-                </div>
+                    {user.isPaused ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+
+                {isHost && !isCurrentUser && (
+                  <div className="flex shrink-0 gap-1">
+                    {!compact && (
+                      <button
+                        onClick={() => onTransferOwnership(user.username)}
+                        className="icon-button h-8 min-h-8 w-8 min-w-8"
+                        title={`Transfer ownership to ${user.username}`}
+                      >
+                        <UserPlus className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <button
+                      onClick={() => onKickUser(user.username)}
+                      className="icon-button h-8 min-h-8 w-8 min-w-8 text-[var(--danger)]"
+                      title={`Remove ${user.username}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
               </div>
-
-              {/* Pause/Unpause Button (host only, not on self) */}
-              {isHost && !user.isHost && (
-                <div className="flex-shrink-0">
-                  {user.isPaused ? (
-                    <button
-                      onClick={() => onUnpauseUser(user.username)}
-                      className="pixel-button pixel-button--small flex items-center gap-1 text-[7px] text-emerald-400 border-emerald-500/30 hover:border-emerald-500 hover:bg-emerald-500/10"
-                      title={`Unpause ${user.username}`}
-                    >
-                      <Play className="w-2.5 h-2.5" />
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => onPauseUser(user.username)}
-                      className="pixel-button pixel-button--small flex items-center gap-1 text-[7px] text-red-400 border-red-500/30 hover:border-red-500 hover:bg-red-500/10"
-                      title={`Pause ${user.username}`}
-                    >
-                      <Pause className="w-2.5 h-2.5" />
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Connection Status */}
-              {!isHost || user.isHost ? (
-                <div className="flex-shrink-0 flex items-center justify-center opacity-50">
-                  <div className={`w-1.5 h-1.5 rounded-full ${user.isPaused ? 'bg-red-400' : 'bg-emerald-400 shadow-[0_0_4px_#10b981]'}`}></div>
-                </div>
-              ) : null}
             </div>
           )
         })}
       </div>
-
-      {/* Empty slots */}
-      {users.length < 4 && (
-        <div className="mt-4 space-y-2">
-          {Array.from({ length: 4 - users.length }).map((_, index) => (
-            <div
-              key={`empty-${index}`}
-              className="flex items-center gap-3 p-2.5 rounded border border-dashed border-retro-border/20 bg-retro-surface/30 opacity-60"
-            >
-              <div className="w-3 h-3 rounded-full border border-dashed border-retro-border/40"></div>
-              <span className="text-retro-text text-[9px] tracking-widest uppercase opacity-40">WAITING...</span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   )
 }

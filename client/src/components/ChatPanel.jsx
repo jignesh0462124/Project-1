@@ -1,130 +1,107 @@
-import { useState, useRef, useEffect } from 'react'
-import { Send, MessageSquare } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Maximize2, Minimize2, Send } from 'lucide-react'
 
-function ChatPanel({ messages, onSendMessage, currentUser }) {
+function ChatPanel({ messages, onSendMessage, currentUser, onFullscreen, isFullscreen = false }) {
   const [newMessage, setNewMessage] = useState('')
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  const handleSendMessage = (e) => {
-    e.preventDefault()
-    
+  useEffect(() => {
+    if (isFullscreen) inputRef.current?.focus()
+  }, [isFullscreen])
+
+  const handleSendMessage = (event) => {
+    event.preventDefault()
     if (!newMessage.trim()) return
-    
     onSendMessage(newMessage.trim())
     setNewMessage('')
-    
-    // Focus back to input
-    setTimeout(() => {
-      inputRef.current?.focus()
-    }, 0)
+    setTimeout(() => inputRef.current?.focus(), 0)
   }
 
-  const handleKeyPress = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSendMessage(e)
-    }
+  const formatTime = (timestamp) => {
+    if (!timestamp) return ''
+    const [hours, minutes] = timestamp.split(':')
+    return `${hours}:${minutes}`
   }
 
-  const getMessageColor = (username) => {
-    if (username === 'SYSTEM') return 'text-amber-400'
-    if (username === currentUser) return 'text-retro-cyan'
-    return 'text-retro-text'
-  }
+  const counterVisible = newMessage.length >= 180
 
   return (
-    <div className="flex flex-col h-full min-h-0">
-      {/* Chat Header */}
-      <div className="p-4 border-b border-retro-border/30 bg-retro-surface/50">
-        <h3 className="text-retro-text text-[10px] uppercase flex items-center gap-2 opacity-70 tracking-widest pl-1">
-          <MessageSquare className="w-3.5 h-3.5" />
-          TERMINAL <span className="opacity-50">({messages.length})</span>
-        </h3>
+    <div className={`flex h-full min-h-0 flex-col bg-retro-surface ${isFullscreen ? 'fixed inset-4 z-50 rounded-lg border border-retro-border shadow-[var(--shadow-pop)]' : ''}`}>
+      <div className="flex items-center justify-between border-b border-retro-border px-4 py-3">
+        <div>
+          <h3 className="ui-label text-retro-text">Chat</h3>
+          <p className="mt-1 text-xs text-[var(--text-dim)]">{messages.length} room messages</p>
+        </div>
+        {onFullscreen && (
+          <button onClick={onFullscreen} className="icon-button" title={isFullscreen ? 'Exit fullscreen chat' : 'Fullscreen chat'}>
+            {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+        )}
       </div>
 
-      {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0 custom-scrollbar">
+      <div className="custom-scrollbar flex-1 space-y-3 overflow-y-auto p-4">
         {messages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-full opacity-40">
-            <MessageSquare className="w-6 h-6 mb-3 opacity-50" />
-            <div className="text-retro-text text-[9px] text-center uppercase tracking-widest leading-relaxed">
-              SYSTEM INITIALIZED.<br />
-              WAITING FOR INPUT...
-            </div>
-          </div>
+          <div className="flex h-full items-center text-sm text-[var(--text-dim)]">No messages yet.</div>
         ) : (
-          messages.map((message, index) => (
-            <div
-              key={`${message.timestamp}-${index}`}
-              className={`
-                text-[11px] break-words
-                ${message.isSystem 
-                  ? 'flex justify-center opacity-70 my-2' 
-                  : ''
-                }
-              `}
-            >
-              {message.isSystem ? (
-                <div className="text-[9px] uppercase tracking-wider bg-retro-surface px-3 py-1 rounded-full border border-retro-border/20">
+          messages.map((message, index) => {
+            const isSystem = message.isSystem
+            const isOwn = message.username === currentUser
+
+            if (isSystem) {
+              return (
+                <div key={`${message.timestamp}-${index}`} className="text-xs leading-5 text-[var(--muted)]">
                   {message.message}
                 </div>
-              ) : (
-                <>
-                  {/* Message Header */}
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-[10px] font-bold tracking-wide ${getMessageColor(message.username)}`}>
-                      {message.username}
-                      {message.username === currentUser && <span className="opacity-50 font-normal"> (YOU)</span>}
-                    </span>
-                    <span className="text-retro-text opacity-40 text-[8px] tracking-wider">
-                      {message.timestamp}
-                    </span>
-                  </div>
-                  
-                  {/* Message Content */}
-                  <div className="text-retro-text opacity-90 leading-relaxed bg-retro-surface/30 px-3 py-2 rounded-lg rounded-tl-sm border border-retro-border/10">
-                    {message.message}
-                  </div>
-                </>
-              )}
-            </div>
-          ))
+              )
+            }
+
+            return (
+              <div key={`${message.timestamp}-${index}`} className="group">
+                <div className="mb-1 flex items-baseline gap-2">
+                  <span className={`font-mono-ui text-[11px] font-semibold ${isOwn ? 'text-retro-cyan' : 'text-retro-accent'}`}>
+                    {message.username}
+                  </span>
+                  <span className="text-[11px] text-[var(--muted)]">{formatTime(message.timestamp)}</span>
+                </div>
+                <div className="rounded border border-retro-border bg-[var(--surface-raised)] px-3 py-2">
+                  <p className="text-sm leading-6 text-retro-text">{message.message}</p>
+                </div>
+              </div>
+            )
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Message Input */}
-      <form onSubmit={handleSendMessage} className="p-4 border-t border-retro-border/30 bg-retro-surface/30">
+      <form onSubmit={handleSendMessage} className="border-t border-retro-border p-3">
         <div className="flex gap-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={handleKeyPress}
-            placeholder="ENTER COMMAND..."
-            maxLength={200}
-            className="flex-1 pixel-input text-[10px]"
-            autoComplete="off"
-          />
-          <button
-            type="submit"
-            disabled={!newMessage.trim()}
-            className="pixel-button pixel-button--small flex items-center justify-center w-10 hover:bg-retro-cyan hover:border-retro-cyan hover:text-retro-bg transition-all disabled:opacity-50"
-          >
-            <Send className="w-3.5 h-3.5" />
+          <div className="relative flex-1">
+            <input
+              ref={inputRef}
+              type="text"
+              value={newMessage}
+              onChange={(event) => setNewMessage(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) handleSendMessage(event)
+              }}
+              placeholder="Type a message..."
+              maxLength={200}
+              className="pixel-input pr-14"
+            />
+            {counterVisible && (
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 font-mono-ui text-[10px] text-[var(--muted)]">
+                {newMessage.length}/200
+              </span>
+            )}
+          </div>
+          <button type="submit" disabled={!newMessage.trim()} className="btn btn-primary px-3" title="Send message">
+            <Send className="h-4 w-4" />
           </button>
-        </div>
-        
-        {/* Character count */}
-        <div className="text-retro-text text-[8px] opacity-40 mt-2 tracking-widest text-right">
-          {newMessage.length}/200
         </div>
       </form>
     </div>

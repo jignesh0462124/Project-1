@@ -11,17 +11,20 @@ class SocketService {
     this.reconnectDelay = 1000;
   }
 
-  connect() {
+  connect(accessToken = null) {
     if (this.socket && this.connected) {
+      this.socket.auth = accessToken ? { token: accessToken } : {};
       return this.socket;
     }
 
     if (this.socket) {
+      this.socket.auth = accessToken ? { token: accessToken } : {};
       this.socket.connect()
       return this.socket
     }
 
     this.socket = io(SOCKET_URL, {
+      auth: accessToken ? { token: accessToken } : {},
       transports: ['websocket', 'polling'],
       upgrade: true,
       rememberUpgrade: true,

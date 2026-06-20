@@ -1,5 +1,5 @@
 {
-  "name": "codesync-server",
+  "name": "collaborative-platform-server",
   "version": "1.0.0",
   "description": "Real-time collaborative code editor server",
   "main": "index.js",
@@ -8,10 +8,13 @@
     "dev": "nodemon index.js"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.0",
+    "@supabase/supabase-js": "^2.108.2",
     "axios": "^1.13.6",
     "cors": "^2.8.5",
     "dotenv": "^17.3.1",
     "express": "^4.18.2",
+    "helmet": "^8.1.0",
     "socket.io": "^4.7.2",
     "uuid": "^9.0.0"
   },
@@ -23,6 +26,6 @@
     "collaboration",
     "code-editor"
   ],
-  "author": "CodeSync Team",
+  "author": "Collaborative Platform Team",
   "license": "MIT"
 }

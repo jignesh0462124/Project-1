@@ -16,17 +16,17 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
   const isHost = currentUserData?.isHost
 
   return (
-    <header className="bg-retro-surface border-b border-retro-border/50 p-3 md:p-4 flex flex-wrap items-center justify-between gap-y-3 gap-x-4 shadow-sm">
+    <header className="app-header p-3 md:p-4 flex flex-wrap items-center justify-between gap-y-3 gap-x-4">
       {/* Left Section */}
       <div className="flex flex-wrap items-center gap-2 md:gap-6">
         {/* Room ID */}
         <div className="flex items-center gap-2">
           <span className="hidden sm:inline text-retro-text text-[10px] uppercase opacity-70 tracking-widest mt-0.5">SESSION:</span>
-          <div className="flex items-center gap-2 bg-retro-bg rounded border border-retro-border/30 px-2 md:px-3 py-1.5">
+          <div className="app-chip flex items-center gap-2 rounded-lg px-2 md:px-3 py-1.5">
             <span className="text-retro-cyan font-bold text-[10px] md:text-xs">{roomId}</span>
             <button
               onClick={copyRoomId}
-              className="text-retro-text hover:text-retro-border transition-colors"
+              className="icon-button p-1"
               title="Copy Room ID"
             >
               <Copy className="w-3 h-3" />
@@ -35,7 +35,7 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
         </div>
 
         {/* User Count */}
-        <div className="flex items-center gap-2 bg-retro-bg px-2 md:px-3 py-1.5 rounded border border-retro-border/30">
+        <div className="app-chip flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-lg">
           <Users className="w-3.5 h-3.5 text-retro-cyan opacity-80" />
           <span className="text-retro-text text-[9px] md:text-[10px] tracking-wider mt-0.5">
             {users.length}/4 <span className="hidden sm:inline opacity-60">PLAYERS</span>
@@ -43,10 +43,10 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
         </div>
 
         {/* Connection Status */}
-        <div className="flex items-center gap-2 px-2 md:px-3 py-1.5 rounded border border-retro-border/30 bg-retro-bg">
+        <div className="app-chip flex items-center gap-2 px-2 md:px-3 py-1.5 rounded-lg">
           <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-            isConnected 
-              ? 'bg-emerald-400 shadow-[0_0_5px_#10b981]' 
+            isConnected
+              ? 'bg-emerald-400 shadow-[0_0_5px_#10b981]'
               : 'bg-red-400 animate-pulse'
           }`}></div>
           <span className={`text-[8px] md:text-[9px] tracking-wider mt-0.5 whitespace-nowrap ${
@@ -62,14 +62,14 @@ function RoomHeader({ roomId, users, currentUser, isConnected, onLeaveRoom }) {
         {/* Current User Info */}
         <div className="flex items-center gap-1.5 md:gap-2">
           {isHost && <Crown className="w-3.5 h-3.5 md:w-4 md:h-4 text-retro-yellow flex-shrink-0" />}
-          <div 
-            className="w-3 h-3 border"
-            style={{ 
+          <div
+            className="w-3 h-3 rounded-full border shadow-sm"
+            style={{
               backgroundColor: currentUserData?.color || '#00ff88',
               borderColor: currentUserData?.color || '#00ff88'
             }}
           ></div>
-          <span className="text-retro-text text-xs uppercase">
+          <span className="text-retro-text text-xs uppercase tracking-wide">
             {currentUser}
             {isHost && <span className="text-retro-yellow ml-1">(HOST)</span>}
           </span>

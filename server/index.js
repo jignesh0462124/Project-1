@@ -5,6 +5,10 @@ const socketIo = require('socket.io');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const helmet = require('helmet');
+const { DSA_PROBLEMS } = require('./problems');
+const { getUserFromAccessToken } = require('./config/supabase');
+const roomService = require('./services/roomService');
 
 // JDoodle API language mapping (free: 200 credits/day, email signup only)
 const JDOODLE_LANGUAGES = {
@@ -18,10 +22,16 @@ const JDOODLE_LANGUAGES = {
 };
 
 const JDOODLE_API_URL = 'https://api.jdoodle.com/v1/execute';
+const SUPPORTED_ROOM_LANGUAGES = new Set([...Object.keys(JDOODLE_LANGUAGES), 'html']);
+const MAX_CODE_LENGTH = 50000;
+const MAX_CHAT_MESSAGE_LENGTH = 200;
+const MAX_USERNAME_LENGTH = 20;
 
 const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 3001;
+
+app.disable('x-powered-by');
 
 // Parse CORS origins from env or use defaults
 const CORS_ORIGINS = process.env.CORS_ORIGINS
@@ -34,8 +44,11 @@ app.use(cors({
   credentials: true
 }));
 
-// Parse JSON request bodies
-app.use(express.json());
+// Security headers
+app.use(helmet());
+
+// Parse JSON request bodies with size limits
+app.use(express.json({ limit: '1mb' }));
 
 const io = socketIo(server, {
   cors: {
@@ -45,44 +58,153 @@ const io = socketIo(server, {
   }
 });
 
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token;
+    socket.supabaseUser = await getUserFromAccessToken(token);
+    next();
+  } catch (error) {
+    next(new Error('Authentication failed'));
+  }
+});
+
 // Room storage: rooms[roomId] = { users: [], code: "", language: "javascript", cleanupTimeout: null }
 const rooms = new Map();
+const DEFAULT_ROOM_CODE = '// Welcome to Collaborative Platform!\n// Start collaborating by typing here...\n\nconsole.log("Hello, world!");';
 
 // User colors for cursor identification
-const userColors = ["#00ff88", "#00d4ff", "#ffff00", "#ff00ff"];
+const userColors = ["#6FF0BD", "#B79CFF", "#FFB454", "#7BB8FF"];
 
 function getUserColor(userIndex) {
   return userColors[userIndex % userColors.length];
+}
+
+function getRoomUsers(room) {
+  return room.users.map((user) => ({ ...user }));
 }
 
 function generateRoomId() {
   return uuidv4().substring(0, 8).toUpperCase();
 }
 
+function normalizeRoomId(roomId) {
+  const normalized = String(roomId || '').trim().toUpperCase();
+  return /^[A-Z0-9]{8}$/.test(normalized) ? normalized : null;
+}
+
+function normalizeUsername(username) {
+  const normalized = String(username || '').trim();
+  if (!normalized || normalized.length > MAX_USERNAME_LENGTH) return null;
+  return normalized;
+}
+
+function normalizeLanguage(language) {
+  const normalized = String(language || 'javascript').trim().toLowerCase();
+  return SUPPORTED_ROOM_LANGUAGES.has(normalized) ? normalized : 'javascript';
+}
+
+function isValidCodePayload(code) {
+  return typeof code === 'string' && code.length <= MAX_CODE_LENGTH;
+}
+
+function normalizeChatMessage(message) {
+  const normalized = String(message || '').trim();
+  if (!normalized || normalized.length > MAX_CHAT_MESSAGE_LENGTH) return null;
+  return normalized;
+}
+
+function isValidCursorPosition(position) {
+  return Number.isInteger(position?.lineNumber)
+    && Number.isInteger(position?.column)
+    && position.lineNumber > 0
+    && position.column > 0
+    && position.lineNumber < 1000000
+    && position.column < 100000;
+}
+
+function getProviderErrorDetails(error) {
+  if (!error) return 'Unknown provider error.';
+
+  const responseDetails = error.response?.data?.error || error.response?.data;
+  if (responseDetails) {
+    return typeof responseDetails === 'string'
+      ? responseDetails
+      : JSON.stringify(responseDetails);
+  }
+
+  if (error.code) return `${error.code}${error.message ? `: ${error.message}` : ''}`;
+  if (error.message) return error.message;
+  if (error.cause?.message) return error.cause.message;
+
+  return 'The external provider could not be reached. Check the backend terminal, network access, and provider credentials.';
+}
+
 io.on('connection', (socket) => {
   console.log(`🔗 User connected: ${socket.id}`);
 
+  const eventTimes = [];
+  socket.use((_packet, next) => {
+    const now = Date.now();
+    while (eventTimes.length && now - eventTimes[0] > 10000) eventTimes.shift();
+    eventTimes.push(now);
+
+    if (eventTimes.length > 120) {
+      return next(new Error('Rate limit exceeded'));
+    }
+
+    return next();
+  });
+
   // Handle room joining
-  socket.on('join-room', ({ roomId, username, language }) => {
+  socket.on('join-room', async ({ roomId, username, language }) => {
+    roomId = normalizeRoomId(roomId);
+    username = normalizeUsername(username);
+    language = normalizeLanguage(language);
+
+    if (!roomId || !username) {
+      socket.emit('action-blocked', { message: 'Invalid room or display name.' });
+      return;
+    }
+
     console.log(`👤 ${username} attempting to join room: ${roomId}`);
 
-    // Create room if it doesn't exist
+      // Create room if it doesn't exist
     if (!rooms.has(roomId)) {
+      const persistedRoom = await roomService.getRoom(roomId);
       const initialLanguage = language || 'javascript';
       rooms.set(roomId, {
         users: [],
-        code: '// Welcome to CodeSync!\n// Start collaborating by typing here...\n\nconsole.log("Hello, world!");',
-        language: initialLanguage
+        code: persistedRoom.data?.code || DEFAULT_ROOM_CODE,
+        language: persistedRoom.data?.language || initialLanguage,
+        currentProblem: null,
+        solvedProblems: new Set(),
+        problemBoilerplates: {}
       });
       console.log(`🏠 Created new room: ${roomId} with language: ${initialLanguage}`);
     }
 
     const room = rooms.get(roomId);
 
+    const existingSocketUser = room.users.find(u => u.id === socket.id);
+    if (existingSocketUser) {
+      socket.join(roomId);
+      socket.roomId = roomId;
+      socket.username = existingSocketUser.username;
+      socket.userId = existingSocketUser.userId;
+      socket.emit('room-joined', {
+        users: getRoomUsers(room),
+        code: room.code,
+        language: room.language,
+        roomId,
+        currentUserId: socket.id
+      });
+      return;
+    }
+
     // Check if room is full (max 4 users)
     if (room.users.length >= 4) {
-      socket.emit('room-full', { 
-        message: 'Room is full! Maximum 4 players allowed.' 
+      socket.emit('room-full', {
+        message: 'Room is full! Maximum 4 players allowed.'
       });
       console.log(`❌ Room ${roomId} is full, rejected ${username}`);
       return;
@@ -91,8 +213,8 @@ io.on('connection', (socket) => {
     // Check if username already exists in room
     const existingUser = room.users.find(u => u.username === username);
     if (existingUser) {
-      socket.emit('username-taken', { 
-        message: 'Username already taken in this room!' 
+      socket.emit('username-taken', {
+        message: 'Username already taken in this room!'
       });
       console.log(`❌ Username ${username} already taken in room ${roomId}`);
       return;
@@ -101,11 +223,13 @@ io.on('connection', (socket) => {
     // Add user to room
     const isHost = room.users.length === 0;
     const userColor = getUserColor(room.users.length);
-    
+
     const newUser = {
       id: socket.id,
+      userId: socket.supabaseUser?.id || null,
       username,
       color: userColor,
+      role: isHost ? 'owner' : 'member',
       isHost,
       isPaused: false,
       cursor: null
@@ -115,19 +239,41 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     socket.roomId = roomId;
     socket.username = username;
+    socket.userId = newUser.userId;
+
+    if (isHost) {
+      roomService.upsertRoom({
+        roomId,
+        ownerId: newUser.userId,
+        ownerSocketId: socket.id,
+        language: room.language,
+        code: room.code
+      });
+    }
+
+    roomService.joinRoomMember({
+      roomId,
+      userId: newUser.userId,
+      socketId: socket.id,
+      username,
+      role: newUser.role,
+      isPaused: newUser.isPaused
+    });
 
     // Send current room state to the joining user
     socket.emit('room-joined', {
-      users: room.users,
+      users: getRoomUsers(room),
       code: room.code,
       language: room.language,
-      roomId: roomId
+      roomId,
+      currentUserId: socket.id
     });
 
     // Notify other users in the room
     socket.to(roomId).emit('user-joined', {
       username,
-      users: room.users,
+      user: { ...newUser },
+      users: getRoomUsers(room),
       color: userColor,
       isHost
     });
@@ -137,6 +283,12 @@ io.on('connection', (socket) => {
 
   // Handle code changes
   socket.on('code-change', ({ roomId, code }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId || !isValidCodePayload(code)) {
+      socket.emit('action-blocked', { message: 'Invalid code update.' });
+      return;
+    }
+
     if (!rooms.has(roomId)) return;
 
     const room = rooms.get(roomId);
@@ -149,14 +301,28 @@ io.on('connection', (socket) => {
     }
 
     room.code = code;
-    
+    roomService.updateRoomCode(roomId, code, room.language);
+
     // Broadcast to all other users in the room (not the sender)
-    socket.to(roomId).emit('code-updated', { code });
+    socket.to(roomId).emit('code-updated', {
+      code,
+      userId: sender?.id || socket.id,
+      username: sender?.username || socket.username,
+      color: sender?.color || 'var(--accent-2)',
+      cursor: sender?.cursor || null
+    });
     console.log(`📝 Code updated in room ${roomId} by ${socket.username}`);
   });
 
   // Handle language changes
   socket.on('language-change', ({ roomId, language, code }) => {
+    roomId = normalizeRoomId(roomId);
+    language = normalizeLanguage(language);
+    if (!roomId || (code !== undefined && !isValidCodePayload(code))) {
+      socket.emit('action-blocked', { message: 'Invalid language update.' });
+      return;
+    }
+
     if (!rooms.has(roomId)) return;
 
     const room = rooms.get(roomId);
@@ -164,9 +330,10 @@ io.on('connection', (socket) => {
     if (code !== undefined) {
       room.code = code;
     }
-    
+    roomService.updateRoomLanguage(roomId, room.language, room.code);
+
     // Broadcast to all users in the room (including sender for consistency)
-    io.to(roomId).emit('language-updated', { 
+    io.to(roomId).emit('language-updated', {
       language,
       code: code !== undefined ? code : room.code
     });
@@ -175,16 +342,21 @@ io.on('connection', (socket) => {
 
   // Handle cursor movements
   socket.on('cursor-move', ({ roomId, username, position }) => {
+    roomId = normalizeRoomId(roomId);
+    username = normalizeUsername(username);
+    if (!roomId || !username || !isValidCursorPosition(position)) return;
+
     if (!rooms.has(roomId)) return;
 
     const room = rooms.get(roomId);
-    const user = room.users.find(u => u.username === username);
-    
+    const user = room.users.find(u => u.id === socket.id);
+
     if (user) {
       user.cursor = position;
       // Broadcast cursor position to other users only
       socket.to(roomId).emit('cursor-updated', {
-        username,
+        userId: user.id,
+        username: user.username,
         position,
         color: user.color
       });
@@ -193,7 +365,10 @@ io.on('connection', (socket) => {
 
   // Handle chat messages
   socket.on('chat-message', ({ roomId, username, message }) => {
-    if (!rooms.has(roomId) || !message.trim()) return;
+    roomId = normalizeRoomId(roomId);
+    username = normalizeUsername(username);
+    message = normalizeChatMessage(message);
+    if (!roomId || !username || !message || !rooms.has(roomId)) return;
 
     const timestamp = new Date().toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -202,10 +377,18 @@ io.on('connection', (socket) => {
       hour12: false
     });
 
+    roomService.saveChatMessage({
+      roomId,
+      userId: socket.userId,
+      socketId: socket.id,
+      username,
+      message
+    });
+
     // Broadcast to all users in the room (including sender)
     io.to(roomId).emit('chat-received', {
       username,
-      message: message.trim(),
+      message,
       timestamp
     });
 
@@ -214,6 +397,10 @@ io.on('connection', (socket) => {
 
   // Handle pause user (host only)
   socket.on('pause-user', ({ roomId, targetUsername }) => {
+    roomId = normalizeRoomId(roomId);
+    targetUsername = normalizeUsername(targetUsername);
+    if (!roomId || !targetUsername) return;
+
     if (!rooms.has(roomId)) return;
     const room = rooms.get(roomId);
 
@@ -225,12 +412,17 @@ io.on('connection', (socket) => {
     if (!target || target.isHost) return; // Can't pause the host
 
     target.isPaused = true;
+    roomService.updateMemberPaused(roomId, targetUsername, true);
     io.to(roomId).emit('user-paused', { targetUsername, users: room.users });
     console.log(`⏸️ ${targetUsername} paused by ${host.username} in room ${roomId}`);
   });
 
   // Handle unpause user (host only)
   socket.on('unpause-user', ({ roomId, targetUsername }) => {
+    roomId = normalizeRoomId(roomId);
+    targetUsername = normalizeUsername(targetUsername);
+    if (!roomId || !targetUsername) return;
+
     if (!rooms.has(roomId)) return;
     const room = rooms.get(roomId);
 
@@ -241,33 +433,258 @@ io.on('connection', (socket) => {
     if (!target) return;
 
     target.isPaused = false;
+    roomService.updateMemberPaused(roomId, targetUsername, false);
     io.to(roomId).emit('user-unpaused', { targetUsername, users: room.users });
     console.log(`▶️ ${targetUsername} unpaused by ${host.username} in room ${roomId}`);
   });
 
+  // Handle kick user (owner only)
+  socket.on('kick-user', ({ roomId, targetUsername }) => {
+    roomId = normalizeRoomId(roomId);
+    targetUsername = normalizeUsername(targetUsername);
+    if (!roomId || !targetUsername) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const owner = room.users.find(u => u.id === socket.id);
+    if (!owner || owner.role !== 'owner') return;
+
+    const target = room.users.find(u => u.username === targetUsername);
+    if (!target || target.role === 'owner') return;
+
+    io.to(roomId).emit('user-kicked', { targetUsername, users: room.users, kickedBy: owner.username });
+    handleUserLeave(socket, roomId, targetUsername, true, target.id);
+    console.log(`👢 ${targetUsername} kicked by ${owner.username} from room ${roomId}`);
+  });
+
+  // Handle transfer ownership (owner only)
+  socket.on('transfer-ownership', ({ roomId, targetUsername }) => {
+    roomId = normalizeRoomId(roomId);
+    targetUsername = normalizeUsername(targetUsername);
+    if (!roomId || !targetUsername) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const currentOwner = room.users.find(u => u.id === socket.id);
+    if (!currentOwner || currentOwner.role !== 'owner') return;
+
+    const target = room.users.find(u => u.username === targetUsername);
+    if (!target || target.role === 'owner') return;
+
+    currentOwner.role = 'member';
+    currentOwner.isHost = false;
+    target.role = 'owner';
+    target.isHost = true;
+    roomService.transferOwnership({
+      roomId,
+      newOwnerUserId: target.userId,
+      newOwnerSocketId: target.id,
+      previousOwnerUserId: currentOwner.userId,
+      previousOwnerSocketId: currentOwner.id
+    });
+
+    io.to(roomId).emit('ownership-transferred', {
+      newOwner: targetUsername,
+      previousOwner: currentOwner.username,
+      users: room.users
+    });
+    console.log(`👑 Ownership transferred from ${currentOwner.username} to ${targetUsername} in room ${roomId}`);
+  });
+
+  // Problem-related handlers
+  socket.on('get-problems', () => {
+    socket.emit('problems-list', { problems: DSA_PROBLEMS });
+  });
+
+  socket.on('select-problem', ({ roomId, problemId }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId || !Number.isInteger(problemId)) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const user = room.users.find(u => u.id === socket.id);
+    if (!user || user.role !== 'owner') return;
+
+    const problem = DSA_PROBLEMS.find(p => p.id === problemId);
+    if (!problem) return;
+
+    room.currentProblem = problem;
+    const boilerplate = problem.boilerplate[room.language] || problem.boilerplate.javascript;
+    room.code = boilerplate;
+    room.problemBoilerplates[problem.id] = boilerplate;
+    roomService.setCurrentProblem(roomId, problem.id, boilerplate, room.language);
+
+    io.to(roomId).emit('problem-selected', {
+      problem,
+      code: boilerplate,
+      solvedBy: Array.from(room.solvedProblems)
+    });
+    console.log(`📋 Problem "${problem.title}" selected in room ${roomId} by ${user.username}`);
+  });
+
+  socket.on('select-random-problem', ({ roomId }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const user = room.users.find(u => u.id === socket.id);
+    if (!user || user.role !== 'owner') return;
+
+    const unsolvedProblems = DSA_PROBLEMS.filter(p => !room.solvedProblems.has(p.id));
+    const problemPool = unsolvedProblems.length > 0 ? unsolvedProblems : DSA_PROBLEMS;
+    const randomProblem = problemPool[Math.floor(Math.random() * problemPool.length)];
+
+    room.currentProblem = randomProblem;
+    const boilerplate = randomProblem.boilerplate[room.language] || randomProblem.boilerplate.javascript;
+    room.code = boilerplate;
+    room.problemBoilerplates[randomProblem.id] = boilerplate;
+    roomService.setCurrentProblem(roomId, randomProblem.id, boilerplate, room.language);
+
+    io.to(roomId).emit('problem-selected', {
+      problem: randomProblem,
+      code: boilerplate,
+      solvedBy: Array.from(room.solvedProblems)
+    });
+    console.log(`🎲 Random problem "${randomProblem.title}" selected in room ${roomId} by ${user.username}`);
+  });
+
+  socket.on('submit-solution', ({ roomId, code, language }) => {
+    roomId = normalizeRoomId(roomId);
+    language = normalizeLanguage(language);
+    if (!roomId || !isValidCodePayload(code)) {
+      socket.emit('submission-result', { success: false, message: 'Invalid submission.' });
+      return;
+    }
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    if (!room.currentProblem) {
+      socket.emit('submission-result', { success: false, message: 'No problem selected!' });
+      return;
+    }
+
+    const user = room.users.find(u => u.id === socket.id);
+    if (!user) return;
+
+    socket.emit('submission-result', {
+      success: true,
+      problemId: room.currentProblem.id,
+      problemTitle: room.currentProblem.title,
+      message: 'Solution submitted for verification!'
+    });
+    console.log(`✅ Solution submitted by ${user.username} for problem "${room.currentProblem.title}"`);
+  });
+
+  socket.on('mark-solved', ({ roomId, problemId }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId || !Number.isInteger(problemId)) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const user = room.users.find(u => u.id === socket.id);
+    if (!user || user.role !== 'owner') return;
+
+    const problem = DSA_PROBLEMS.find(p => p.id === problemId);
+    if (!problem) return;
+
+    room.solvedProblems.add(problemId);
+    roomService.markProblemSolved({
+      roomId,
+      userId: user.userId,
+      socketId: user.id,
+      username: user.username,
+      problemId
+    });
+
+    io.to(roomId).emit('problem-solved', {
+      problemId,
+      problemTitle: problem.title,
+      solvedBy: user.username,
+      solvedProblems: Array.from(room.solvedProblems)
+    });
+    console.log(`🏆 Problem "${problem.title}" marked as solved by ${user.username}`);
+  });
+
+  socket.on('reset-problem', ({ roomId }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId) return;
+
+    if (!rooms.has(roomId)) return;
+    const room = rooms.get(roomId);
+
+    const user = room.users.find(u => u.id === socket.id);
+    if (!user || user.role !== 'owner') return;
+
+    if (room.currentProblem) {
+      const boilerplate = room.currentProblem.boilerplate[room.language] || room.currentProblem.boilerplate.javascript;
+      room.code = boilerplate;
+      roomService.setCurrentProblem(roomId, room.currentProblem.id, boilerplate, room.language);
+      io.to(roomId).emit('problem-reset', {
+        code: boilerplate,
+        problem: room.currentProblem
+      });
+      console.log(`🔄 Problem "${room.currentProblem.title}" reset by ${user.username}`);
+    }
+  });
+
   // Handle leaving room
   socket.on('leave-room', ({ roomId, username }) => {
+    roomId = normalizeRoomId(roomId);
+    username = normalizeUsername(username);
+    if (!roomId || !username) return;
+
     handleUserLeave(socket, roomId, username);
   });
 
   // Handle disconnect
   socket.on('disconnect', () => {
     console.log(`🔌 User disconnected: ${socket.id}`);
-    
+
     if (socket.roomId && socket.username) {
       handleUserLeave(socket, socket.roomId, socket.username);
     }
   });
 
-  function handleUserLeave(socket, roomId, username) {
+  function handleUserLeave(socket, roomId, username, isKicked = false, kickedSocketId = null) {
     if (!rooms.has(roomId)) return;
 
     const room = rooms.get(roomId);
-    const userIndex = room.users.findIndex(u => u.username === username);
+    const targetSocketId = isKicked && kickedSocketId ? kickedSocketId : socket.id;
+    const userIndex = room.users.findIndex(u => u.id === targetSocketId);
 
     if (userIndex !== -1) {
+      const leavingUser = room.users[userIndex];
+      const wasOwner = leavingUser.role === 'owner' || leavingUser.isHost;
+      const leavingSocket = isKicked && kickedSocketId
+        ? io.sockets.sockets.get(kickedSocketId)
+        : socket;
+
       room.users.splice(userIndex, 1);
-      socket.leave(roomId);
+      leavingSocket?.leave(roomId);
+      if (!isKicked || socket.id === leavingUser.id) {
+        socket.roomId = null;
+        socket.username = null;
+      }
+      roomService.leaveRoomMember({
+        roomId,
+        userId: leavingUser.userId,
+        socketId: leavingUser.id
+      });
+
+      // If kicked, disconnect the kicked user's socket
+      if (isKicked && kickedSocketId) {
+        if (leavingSocket) {
+          leavingSocket.emit('kicked-from-room', { roomId });
+          leavingSocket.leave(roomId);
+        }
+      }
 
       // Clear any pending cleanup timeout
       if (room.cleanupTimeout) {
@@ -277,30 +694,44 @@ io.on('connection', (socket) => {
 
       // If room is empty, schedule deletion after timeout (allows quick rejoin)
       if (room.users.length === 0) {
+        socket.roomId = null;
+        socket.username = null;
         room.cleanupTimeout = setTimeout(() => {
           if (rooms.has(roomId)) {
             const currentRoom = rooms.get(roomId);
             if (currentRoom.users.length === 0) {
               rooms.delete(roomId);
+              roomService.closeRoom(roomId);
               console.log(`🗑️ Deleted empty room: ${roomId} after timeout`);
             }
           }
         }, 60000); // 1 minute timeout before room cleanup
       } else {
-        // If the host left, make the first remaining user the new host
-        if (userIndex === 0 && room.users.length > 0) {
+        // If the owner left, make the first remaining user the new owner
+        if (wasOwner && room.users.length > 0) {
           room.users[0].isHost = true;
-          console.log(`👑 ${room.users[0].username} is now the host of room ${roomId}`);
+          room.users[0].role = 'owner';
+          roomService.transferOwnership({
+            roomId,
+            newOwnerUserId: room.users[0].userId,
+            newOwnerSocketId: room.users[0].id,
+            previousOwnerUserId: leavingUser.userId,
+            previousOwnerSocketId: leavingUser.id
+          });
+          io.to(roomId).emit('new-owner', { newOwner: room.users[0].username, users: getRoomUsers(room) });
+          console.log(`👑 ${room.users[0].username} is now the owner of room ${roomId}`);
         }
 
         // Notify remaining users
-        socket.to(roomId).emit('user-left', {
-          username,
-          users: room.users
+        io.to(roomId).emit('user-left', {
+          username: leavingUser.username,
+          userId: leavingUser.id,
+          users: getRoomUsers(room),
+          isKicked
         });
       }
 
-      console.log(`👋 ${username} left room ${roomId} (${room.users.length}/4 users remaining)`);
+      console.log(`👋 ${username} ${isKicked ? 'kicked from' : 'left'} room ${roomId} (${room.users.length}/4 users remaining)`);
     }
   }
 });
@@ -313,11 +744,46 @@ app.get('/api/create-room', (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     rooms: rooms.size,
+    supabase: {
+      configured: roomService.isSupabaseConfigured,
+      persistence: roomService.isSupabaseConfigured ? 'enabled' : 'disabled'
+    },
     timestamp: new Date().toISOString()
   });
+});
+
+app.get('/api/rooms/:roomId', async (req, res) => {
+  const roomId = normalizeRoomId(req.params.roomId);
+  if (!roomId) return res.status(400).json({ error: 'Invalid room id' });
+
+  const memoryRoom = rooms.get(roomId);
+
+  if (memoryRoom) {
+    return res.json({
+      source: 'memory',
+      room: {
+        id: roomId,
+        users: memoryRoom.users,
+        language: memoryRoom.language,
+        is_active: true,
+        current_problem_id: memoryRoom.currentProblem?.id || null
+      }
+    });
+  }
+
+  const { data, error } = await roomService.getRoom(roomId);
+  if (error) return res.status(500).json({ error: 'Failed to fetch room' });
+  if (!data) return res.status(404).json({ error: 'Room not found' });
+
+  return res.json({ source: 'supabase', room: data });
+});
+
+// API endpoint to get problems list
+app.get('/api/problems', (req, res) => {
+  res.json({ problems: DSA_PROBLEMS });
 });
 
 // Code execution endpoint via JDoodle (free: 200 credits/day)
@@ -327,6 +793,10 @@ app.post('/api/execute', async (req, res) => {
 
     if (!code || !language) {
       return res.status(400).json({ error: 'code and language are required' });
+    }
+
+    if (!isValidCodePayload(code)) {
+      return res.status(400).json({ error: 'Code exceeds maximum length of 50,000 characters' });
     }
 
     const jdoodleLang = JDOODLE_LANGUAGES[language];
@@ -366,7 +836,7 @@ app.post('/api/execute', async (req, res) => {
     const isError = result.statusCode !== 200;
     const isTimeLimit = result.statusCode === 139 || result.cpuTime > 15;
     const isMemoryLimit = result.memory && result.memory > 256000;
-    
+
     let status;
     if (isTimeLimit) {
       status = { id: 5, description: 'Time Limit Exceeded (>15s)' };
@@ -388,8 +858,9 @@ app.post('/api/execute', async (req, res) => {
       error: result.error || (isTimeLimit ? 'Execution time exceeded 15 seconds limit' : null),
     });
   } catch (err) {
+    const details = getProviderErrorDetails(err);
     console.error('❌ Code execution error:', err.message);
-    
+
     if (err.code === 'ECONNABORTED') {
       return res.status(408).json({
         error: 'Request Timeout',
@@ -397,19 +868,19 @@ app.post('/api/execute', async (req, res) => {
         status: { id: 5, description: 'Time Limit Exceeded' },
       });
     }
-    
+
     if (err.response) {
       const status = err.response.status;
       const data = err.response.data;
-      
+
       // JDoodle specific errors
       if (data && data.error) {
         return res.status(status).json({
           error: 'JDoodle API Error',
-          details: data.error,
+          details,
         });
       }
-      
+
       // Rate limit or other HTTP errors
       if (status === 429) {
         return res.status(429).json({
@@ -417,36 +888,23 @@ app.post('/api/execute', async (req, res) => {
           details: 'Too many requests. Please wait a moment before running code again.',
         });
       }
-      
+
       return res.status(status).json({
         error: 'JDoodle API error',
-        details: data,
+        details,
       });
     }
-    
-    res.status(500).json({ error: 'Code execution failed', details: err.message });
-  }
-    res.status(500).json({ error: 'Code execution failed', details: err.message });
+
+    res.status(502).json({
+      error: 'Code execution provider unavailable',
+      details,
+      status: { id: 11, description: 'Execution Provider Error' }
+    });
   }
 });
 
-// AI Code Analysis endpoint via Google Gemini
-app.post('/api/analyze', async (req, res) => {
-  try {
-    const { code, language, compilerOutput } = req.body;
-
-    if (!code || !language) {
-      return res.status(400).json({ error: 'code and language are required' });
-    }
-
-    const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) {
-      return res.status(500).json({
-        error: 'Gemini API is not configured. Add GEMINI_API_KEY to server/.env',
-      });
-    }
-
-    const systemPrompt = `You are an AI programming assistant embedded inside a real-time collaborative coding platform called CODE SYNC.
+function buildAnalysisPrompts(code, language, compilerOutput) {
+  const systemPrompt = `You are an AI programming assistant embedded inside a real-time collaborative coding platform called Collaborative Platform.
 Analyze the provided code and compiler output carefully.
 
 Your responsibilities:
@@ -463,7 +921,7 @@ Format your response in markdown with these sections:
 ## Explanation
 ## Improvement Suggestions`;
 
-    const userPrompt = `Language: ${language}
+  const userPrompt = `Language: ${language}
 
 User Code:
 \`\`\`${language}
@@ -473,35 +931,223 @@ ${code}
 Compiler Output:
 ${compilerOutput || 'No compiler output available (code not yet executed).'}`;
 
-    const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey}`,
-      {
-        contents: [{
-          parts: [
-            { text: systemPrompt + '\n\n' + userPrompt }
-          ]
-        }],
-        generationConfig: {
-          temperature: 0.3,
-          maxOutputTokens: 2048,
-        },
+  return { systemPrompt, userPrompt };
+}
+
+function getOpenRouterModels() {
+  const primaryModel = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash';
+  const fallbackModels = (process.env.OPENROUTER_FALLBACK_MODELS || '')
+    .split(',')
+    .map(model => model.trim())
+    .filter(Boolean);
+
+  return [...new Set([primaryModel, ...fallbackModels])];
+}
+
+async function requestOpenRouterAnalysis({ code, language, compilerOutput, model }) {
+  const { systemPrompt, userPrompt } = buildAnalysisPrompts(code, language, compilerOutput);
+
+  const response = await axios.post(
+    'https://openrouter.ai/api/v1/chat/completions',
+    {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.3,
+      max_tokens: 2048,
+    },
+    {
+      headers: {
+        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:5173',
+        'X-OpenRouter-Title': process.env.OPENROUTER_APP_TITLE || 'Collaborative Platform',
       },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000,
+      timeout: 30000,
+    }
+  );
+
+  return response.data?.choices?.[0]?.message?.content || 'No analysis generated.';
+}
+
+function createLocalAnalysis({ code, language, compilerOutput, reason }) {
+  const findings = [];
+  const trimmedCode = code.trim();
+
+  if (!trimmedCode) {
+    findings.push('The file is empty, so there is nothing to analyze yet.');
+  }
+
+  if (compilerOutput && /error|exception|traceback|failed|undefined|cannot|syntax/i.test(compilerOutput)) {
+    findings.push('The latest compiler output appears to contain an error. Start by reading the first error line and the line number it references.');
+  }
+
+  if (/\beval\s*\(/.test(code)) {
+    findings.push('Avoid `eval(...)`; it can execute unsafe input and makes debugging harder.');
+  }
+
+  if (language === 'javascript' || language === 'typescript') {
+    if (/\bvar\s+/.test(code)) {
+      findings.push('Use `const` or `let` instead of `var` so variable scope is easier to reason about.');
+    }
+    if (/[^=!]==[^=]|!=[^=]/.test(code)) {
+      findings.push('Prefer strict equality (`===` / `!==`) to avoid implicit type coercion bugs.');
+    }
+  }
+
+  if (/console\.log\s*\(/.test(code)) {
+    findings.push('Remove temporary `console.log` calls or keep them behind a debug flag before sharing final code.');
+  }
+
+  if (code.split('\n').some(line => line.length > 120)) {
+    findings.push('Some lines are longer than 120 characters; wrapping them will make collaboration and review easier.');
+  }
+
+  if (!findings.length) {
+    findings.push('No obvious issue was found by the local fallback analyzer.');
+  }
+
+  const providerReason = reason ? `\n\nProvider note: ${reason}` : '';
+
+  return `## Issue Detected
+${findings.map(item => `- ${item}`).join('\n')}${providerReason}
+
+## Suggested Fix
+- Fix any compiler/runtime error shown in Output first.
+- Keep functions small, name intermediate values clearly, and rerun the code after each change.
+- When the API quota resets, run AI Analysis again for a deeper review.
+
+## Explanation
+The external AI provider is unavailable or out of quota, so this is a local fallback review. It checks common issues and uses compiler output when available, but it is intentionally simpler than the hosted model.
+
+## Improvement Suggestions
+- Add focused test cases for expected input, edge cases, and failure paths.
+- Prefer readable control flow over clever one-liners during collaborative editing.
+- Keep comments for intent, not for restating what the code already says.`;
+}
+
+function shouldUseLocalAnalysisFallback() {
+  return process.env.ANALYSIS_FALLBACK_ON_ERROR !== 'false';
+}
+
+// AI Code Analysis endpoint via OpenRouter with local fallback
+app.post('/api/analyze', async (req, res) => {
+  try {
+    const { code, language, compilerOutput } = req.body;
+
+    if (!code || !language) {
+      return res.status(400).json({ error: 'code and language are required' });
+    }
+
+    if (!isValidCodePayload(code)) {
+      return res.status(400).json({ error: 'Code exceeds maximum length of 50,000 characters' });
+    }
+
+    if (!process.env.OPENROUTER_API_KEY) {
+      if (shouldUseLocalAnalysisFallback()) {
+        return res.json({
+          analysis: createLocalAnalysis({
+            code,
+            language,
+            compilerOutput,
+            reason: 'OpenRouter API key is not configured.',
+          }),
+          provider: 'local-fallback',
+        });
       }
-    );
 
-    const result = response.data;
-    const analysisText = result?.candidates?.[0]?.content?.parts?.[0]?.text || 'No analysis generated.';
+      return res.status(500).json({
+        error: 'OpenRouter API is not configured. Add OPENROUTER_API_KEY to server/.env or enable ANALYSIS_FALLBACK_ON_ERROR.',
+      });
+    }
 
-    res.json({ analysis: analysisText });
+    const providerErrors = [];
+
+    for (const model of getOpenRouterModels()) {
+      try {
+        const analysisText = await requestOpenRouterAnalysis({ code, language, compilerOutput, model });
+        return res.json({ analysis: analysisText, provider: 'openrouter', model });
+      } catch (err) {
+        const status = err.response?.status;
+        const details = err.response?.data?.error?.message || err.response?.data || getProviderErrorDetails(err);
+        providerErrors.push({ model, status, details });
+
+        if (![402, 408, 429, 500, 502, 503, 504].includes(status)) {
+          throw err;
+        }
+      }
+    }
+
+    if (shouldUseLocalAnalysisFallback()) {
+      const exhaustedModels = providerErrors
+        .map(item => `${item.model}${item.status ? ` (${item.status})` : ''}`)
+        .join(', ');
+
+      return res.json({
+        analysis: createLocalAnalysis({
+          code,
+          language,
+          compilerOutput,
+          reason: `OpenRouter model quota/rate limit was reached or unavailable for: ${exhaustedModels}.`,
+        }),
+        provider: 'local-fallback',
+        providerErrors,
+      });
+    }
+
+    return res.status(429).json({
+      error: 'OpenRouter rate limit reached',
+      details: 'All configured OpenRouter models are rate-limited, out of quota, or unavailable.',
+      providerErrors,
+    });
   } catch (err) {
     console.error('\u274c AI analysis error:', err.message);
     if (err.response) {
+      const status = err.response.status;
+      const details = err.response.data?.error?.message || err.response.data || getProviderErrorDetails(err);
+
+      if (shouldUseLocalAnalysisFallback()) {
+        return res.json({
+          analysis: createLocalAnalysis({
+            code: req.body.code,
+            language: req.body.language,
+            compilerOutput: req.body.compilerOutput,
+            reason: `OpenRouter returned ${status || 'an error'}: ${typeof details === 'string' ? details : JSON.stringify(details)}`,
+          }),
+          provider: 'local-fallback',
+        });
+      }
+
+      if (status === 429) {
+        return res.status(429).json({
+          error: 'OpenRouter rate limit reached',
+          details: 'The selected OpenRouter model is currently rate-limited or out of quota. Try again later, add credits, or switch OPENROUTER_MODEL to another available model.',
+        });
+      }
+
+      if (status === 401 || status === 403) {
+        return res.status(status).json({
+          error: 'OpenRouter authentication failed',
+          details: 'Check OPENROUTER_API_KEY in server/.env and restart the server.',
+        });
+      }
+
       return res.status(err.response.status).json({
-        error: 'Gemini API error',
-        details: err.response.data?.error?.message || err.response.data,
+        error: 'OpenRouter API error',
+        details,
+      });
+    }
+    if (shouldUseLocalAnalysisFallback()) {
+      return res.json({
+        analysis: createLocalAnalysis({
+          code: req.body.code,
+          language: req.body.language,
+          compilerOutput: req.body.compilerOutput,
+          reason: `OpenRouter request failed: ${getProviderErrorDetails(err)}`,
+        }),
+        provider: 'local-fallback',
       });
     }
     res.status(500).json({ error: 'AI analysis failed', details: err.message });
@@ -509,7 +1155,7 @@ ${compilerOutput || 'No compiler output available (code not yet executed).'}`;
 });
 
 server.listen(PORT, () => {
-  console.log(`🚀 CodeSync server running on port ${PORT}`);
+  console.log(`🚀 Collaborative Platform server running on port ${PORT}`);
   console.log(`🌐 Socket.io enabled with CORS for localhost:5173`);
 });
 

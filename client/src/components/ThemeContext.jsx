@@ -3,24 +3,23 @@ import { useState, useEffect, createContext } from 'react'
 const ThemeContext = createContext()
 
 export function ThemeProvider({ children }) {
-  // Check local storage or default to 'dark'
   const [theme, setTheme] = useState(() => {
     if (typeof window !== 'undefined') {
       const savedTheme = localStorage.getItem('theme')
-      if (savedTheme) {
-        return savedTheme
-      }
-      return 'dark'
+      if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme
+      return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
     }
+
     return 'dark'
   })
 
   useEffect(() => {
     const root = window.document.documentElement
-    
+
     root.classList.remove('light', 'dark')
     root.classList.add(theme)
-    
+    root.dataset.theme = theme
+
     localStorage.setItem('theme', theme)
   }, [theme])
 

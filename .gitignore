@@ -57,3 +57,7 @@ temp/
 
 # Optional eslint cache
 .eslintcache
+
+# Local Codex agent artifacts
+.agents/
+skills-lock.json

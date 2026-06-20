@@ -8,7 +8,7 @@ const BOILERPLATES = {
 // A simple starter template
 
 function greet(name) {
-  return \`Hello, \${name}! Welcome to CodeSync.\`;
+  return \`Hello, \${name}! Welcome to Collaborative Platform.\`;
 }
 
 // Main execution
@@ -40,7 +40,7 @@ console.log(greet(user));
 
 def greet(name: str) -> str:
     """Return a greeting message."""
-    return f"Hello, {name}! Welcome to CodeSync."
+    return f"Hello, {name}! Welcome to Collaborative Platform."
 
 
 def main():
@@ -57,7 +57,7 @@ if __name__ == "__main__":
 
 public class Main {
     public static String greet(String name) {
-        return "Hello, " + name + "! Welcome to CodeSync.";
+        return "Hello, " + name + "! Welcome to Collaborative Platform.";
     }
 
     public static void main(String[] args) {
@@ -74,7 +74,7 @@ public class Main {
 #include <string>
 
 std::string greet(const std::string& name) {
-    return "Hello, " + name + "! Welcome to CodeSync.";
+    return "Hello, " + name + "! Welcome to Collaborative Platform.";
 }
 
 int main() {
@@ -92,7 +92,7 @@ package main
 import "fmt"
 
 func greet(name string) string {
-    return fmt.Sprintf("Hello, %s! Welcome to CodeSync.", name)
+    return fmt.Sprintf("Hello, %s! Welcome to Collaborative Platform.", name)
 }
 
 func main() {
@@ -105,7 +105,7 @@ func main() {
 // A simple starter template
 
 fn greet(name: &str) -> String {
-    format!("Hello, {}! Welcome to CodeSync.", name)
+    format!("Hello, {}! Welcome to Collaborative Platform.", name)
 }
 
 fn main() {
@@ -119,7 +119,7 @@ fn main() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CodeSync - Hello World</title>
+    <title>Collaborative Platform - Hello World</title>
     <style>
         body {
             font-family: 'Segoe UI', sans-serif;
