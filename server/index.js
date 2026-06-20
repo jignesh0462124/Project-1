@@ -6,9 +6,11 @@ const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
 const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { DSA_PROBLEMS } = require('./problems');
 const { getUserFromAccessToken } = require('./config/supabase');
 const roomService = require('./services/roomService');
+const { requireAuth, optionalAuth } = require('./middleware/auth');
 
 // JDoodle API language mapping (free: 200 credits/day, email signup only)
 const JDOODLE_LANGUAGES = {
@@ -44,8 +46,55 @@ app.use(cors({
   credentials: true
 }));
 
-// Security headers
-app.use(helmet());
+// Security headers with CSP
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      upgradeInsecureRequests: [],
+    },
+  },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+}));
+
+// ── Rate Limiters ────────────────────────────────────────────────────────────
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  message: { error: 'Too many requests. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const executeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many code execution requests. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const analyzeLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: { error: 'Too many AI analysis requests. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const createRoomLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 10,
+  message: { error: 'Too many rooms created. Please wait a moment.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// Apply global rate limiter to all routes
+app.use(globalLimiter);
 
 // Parse JSON request bodies with size limits
 app.use(express.json({ limit: '1mb' }));
@@ -201,7 +250,18 @@ io.on('connection', (socket) => {
   console.log(`🔗 User connected: ${socket.id}`);
 
   const eventTimes = [];
-  socket.use((_packet, next) => {
+  socket.use(([_event, data], next) => {
+    // Payload size guard (200 KB max per event)
+    try {
+      const payloadSize = JSON.stringify(data).length;
+      if (payloadSize > 200 * 1024) {
+        return next(new Error('Payload too large'));
+      }
+    } catch {
+      return next(new Error('Invalid payload'));
+    }
+
+    // Event rate limit (120 events per 10 seconds)
     const now = Date.now();
     while (eventTimes.length && now - eventTimes[0] > 10000) eventTimes.shift();
     eventTimes.push(now);
@@ -807,14 +867,19 @@ io.on('connection', (socket) => {
   }
 });
 
-// API endpoint to create a new room
-app.get('/api/create-room', (req, res) => {
+// API endpoint to create a new room (rate-limited)
+app.get('/api/create-room', createRoomLimiter, (req, res) => {
   const roomId = generateRoomId();
   res.json({ roomId });
 });
 
-// Health check endpoint
+// Public health check — minimal info only
 app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// Detailed health check — requires auth
+app.get('/api/health/details', requireAuth, (req, res) => {
   res.json({
     status: 'ok',
     rooms: rooms.size,
@@ -826,18 +891,20 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-app.get('/api/rooms/:roomId', async (req, res) => {
+// Room info endpoint — requires authentication
+app.get('/api/rooms/:roomId', requireAuth, async (req, res) => {
   const roomId = normalizeRoomId(req.params.roomId);
   if (!roomId) return res.status(400).json({ error: 'Invalid room id' });
 
   const memoryRoom = rooms.get(roomId);
 
   if (memoryRoom) {
+    // Return non-sensitive summary only
     return res.json({
       source: 'memory',
       room: {
         id: roomId,
-        users: memoryRoom.users,
+        userCount: memoryRoom.users.length,
         language: memoryRoom.language,
         is_active: true,
         current_problem_id: memoryRoom.currentProblem?.id || null
@@ -849,16 +916,18 @@ app.get('/api/rooms/:roomId', async (req, res) => {
   if (error) return res.status(500).json({ error: 'Failed to fetch room' });
   if (!data) return res.status(404).json({ error: 'Room not found' });
 
-  return res.json({ source: 'supabase', room: data });
+  // Strip sensitive fields before returning Supabase data
+  const { code: _code, owner_socket_id: _sid, ...safeRoom } = data;
+  return res.json({ source: 'supabase', room: safeRoom });
 });
 
-// API endpoint to get problems list
-app.get('/api/problems', (req, res) => {
+// API endpoint to get problems list (auth required to prevent scraping)
+app.get('/api/problems', requireAuth, (req, res) => {
   res.json({ problems: DSA_PROBLEMS });
 });
 
-// Code execution endpoint via JDoodle (free: 200 credits/day)
-app.post('/api/execute', async (req, res) => {
+// Code execution endpoint via JDoodle — auth + rate limited to protect API quota
+app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
   try {
     const { code, language } = req.body;
 
@@ -1103,10 +1172,16 @@ function shouldUseLocalAnalysisFallback() {
   return process.env.ANALYSIS_FALLBACK_ON_ERROR !== 'false';
 }
 
-// AI Code Analysis endpoint via OpenRouter with local fallback
-app.post('/api/analyze', async (req, res) => {
+// AI Code Analysis endpoint — auth + rate limited to protect API quota
+const MAX_COMPILER_OUTPUT_LENGTH = 2000;
+
+app.post('/api/analyze', analyzeLimiter, requireAuth, async (req, res) => {
   try {
-    const { code, language, compilerOutput } = req.body;
+    const { code, language } = req.body;
+    // Truncate compilerOutput to prevent prompt injection / token stuffing
+    const compilerOutput = typeof req.body.compilerOutput === 'string'
+      ? req.body.compilerOutput.slice(0, MAX_COMPILER_OUTPUT_LENGTH)
+      : null;
 
     if (!code || !language) {
       return res.status(400).json({ error: 'code and language are required' });
