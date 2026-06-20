@@ -28,6 +28,14 @@ const SUPPORTED_ROOM_LANGUAGES = new Set([...Object.keys(JDOODLE_LANGUAGES), 'ht
 const MAX_CODE_LENGTH = 50000;
 const MAX_CHAT_MESSAGE_LENGTH = 200;
 const MAX_USERNAME_LENGTH = 20;
+const MAX_COMPILER_OUTPUT_LENGTH = 2000;
+const DANGEROUS_CODE_PATTERNS = [
+  /while\s*\(\s*true\s*\)/i,
+  /for\s*\(\s*;\s*;\s*\)/i,
+  /\bThread\.sleep\s*\(\s*\d{5,}\s*\)/,
+  /\bsleep\s*\(\s*\d{2,}\s*\)/i,
+  /\bsetInterval\s*\([^,]+,\s*0\s*\)/i
+];
 
 const app = express();
 const server = http.createServer(app);
@@ -101,7 +109,7 @@ app.use(express.json({ limit: '1mb' }));
 
 // Health check endpoint for Render
 app.get('/health', (_req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({ status: 'ok' });
 });
 
 const io = socketIo(server, {
@@ -159,6 +167,16 @@ function normalizeLanguage(language) {
 
 function isValidCodePayload(code) {
   return typeof code === 'string' && code.length <= MAX_CODE_LENGTH;
+}
+
+function isSafeExecutableCode(code) {
+  return typeof code === 'string' && !DANGEROUS_CODE_PATTERNS.some((pattern) => pattern.test(code));
+}
+
+function normalizeCompilerOutput(compilerOutput) {
+  return typeof compilerOutput === 'string'
+    ? compilerOutput.slice(0, MAX_COMPILER_OUTPUT_LENGTH)
+    : null;
 }
 
 function normalizeChatMessage(message) {
@@ -619,7 +637,8 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('ownership-transferred', {
       newOwner: targetUsername,
       previousOwner: currentOwner.username,
-      users: room.users
+      users: getRoomUsers(room),
+      presence: getRoomPresence(room)
     });
     console.log(`👑 Ownership transferred from ${currentOwner.username} to ${targetUsername} in room ${roomId}`);
   });
@@ -849,7 +868,11 @@ io.on('connection', (socket) => {
             previousOwnerUserId: leavingUser.userId,
             previousOwnerSocketId: leavingUser.id
           });
-          io.to(roomId).emit('new-owner', { newOwner: room.users[0].username, users: getRoomUsers(room) });
+          io.to(roomId).emit('new-owner', {
+            newOwner: room.users[0].username,
+            users: getRoomUsers(room),
+            presence: getRoomPresence(room)
+          });
           console.log(`👑 ${room.users[0].username} is now the owner of room ${roomId}`);
         }
 
@@ -875,7 +898,7 @@ app.get('/api/create-room', createRoomLimiter, (req, res) => {
 
 // Public health check — minimal info only
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok' });
 });
 
 // Detailed health check — requires auth
@@ -937,6 +960,10 @@ app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
 
     if (!isValidCodePayload(code)) {
       return res.status(400).json({ error: 'Code exceeds maximum length of 50,000 characters' });
+    }
+
+    if (!isSafeExecutableCode(code)) {
+      return res.status(400).json({ error: 'Code contains patterns that may cause long-running execution.' });
     }
 
     const jdoodleLang = JDOODLE_LANGUAGES[language];
@@ -1173,15 +1200,10 @@ function shouldUseLocalAnalysisFallback() {
 }
 
 // AI Code Analysis endpoint — auth + rate limited to protect API quota
-const MAX_COMPILER_OUTPUT_LENGTH = 2000;
-
 app.post('/api/analyze', analyzeLimiter, requireAuth, async (req, res) => {
   try {
     const { code, language } = req.body;
-    // Truncate compilerOutput to prevent prompt injection / token stuffing
-    const compilerOutput = typeof req.body.compilerOutput === 'string'
-      ? req.body.compilerOutput.slice(0, MAX_COMPILER_OUTPUT_LENGTH)
-      : null;
+    const compilerOutput = normalizeCompilerOutput(req.body.compilerOutput);
 
     if (!code || !language) {
       return res.status(400).json({ error: 'code and language are required' });
@@ -1259,7 +1281,7 @@ app.post('/api/analyze', analyzeLimiter, requireAuth, async (req, res) => {
           analysis: createLocalAnalysis({
             code: req.body.code,
             language: req.body.language,
-            compilerOutput: req.body.compilerOutput,
+            compilerOutput: normalizeCompilerOutput(req.body.compilerOutput),
             reason: `OpenRouter returned ${status || 'an error'}: ${typeof details === 'string' ? details : JSON.stringify(details)}`,
           }),
           provider: 'local-fallback',
@@ -1290,7 +1312,7 @@ app.post('/api/analyze', analyzeLimiter, requireAuth, async (req, res) => {
         analysis: createLocalAnalysis({
           code: req.body.code,
           language: req.body.language,
-          compilerOutput: req.body.compilerOutput,
+          compilerOutput: normalizeCompilerOutput(req.body.compilerOutput),
           reason: `OpenRouter request failed: ${getProviderErrorDetails(err)}`,
         }),
         provider: 'local-fallback',

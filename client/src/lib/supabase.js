@@ -12,6 +12,9 @@ export const supabase = isSupabaseConfigured
 export async function getSupabaseAccessToken() {
   if (!supabase) return null
 
+  const { data: userData, error: userError } = await supabase.auth.getUser()
+  if (userError || !userData.user) return null
+
   const { data, error } = await supabase.auth.getSession()
   if (error) return null
 

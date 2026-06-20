@@ -23,6 +23,7 @@ import {
   Bot,
   Check,
   Copy,
+  Crown,
   Download,
   FileCode2,
   Keyboard,
@@ -74,6 +75,10 @@ function getStoredNumber(key, fallback, min, max) {
 function getStoredDensity() {
   if (typeof window === 'undefined') return 'comfortable'
   return window.localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable'
+}
+
+function isOwnerUser(user) {
+  return Boolean(user?.role === 'owner' || user?.isHost)
 }
 
 function getPresenceKey(item) {
@@ -192,8 +197,10 @@ function EditorPage() {
   const decorationsRef = useRef([])
 
   const currentUser = users.find((user) => user.id === currentUserId) || users.find((user) => user.username === username)
-  const isHost = Boolean(currentUser?.isHost || currentUser?.role === 'owner')
-  const activeEditorUsers = users.filter((user) => user.id !== currentUserId)
+  const isHost = isOwnerUser(currentUser)
+  const activeEditorUsers = users
+    .filter((user) => user.id !== currentUserId)
+    .sort((firstUser, secondUser) => Number(isOwnerUser(secondUser)) - Number(isOwnerUser(firstUser)))
   const currentLanguageLabel = SUPPORTED_LANGUAGES.find((item) => item.value === language)?.label || 'JavaScript'
   const lineCount = Math.max(code.split('\n').length, 1)
   const editorLineHeight = density === 'compact' ? 20 : 22
@@ -213,7 +220,9 @@ function EditorPage() {
       if (!position?.lineNumber || !position?.column) return
 
       const safeCursorId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '-')
-      const displayName = cursorUsername || users.find((user) => user.id === userId)?.username || 'Collaborator'
+      const user = users.find((item) => item.id === userId || item.username === cursorUsername)
+      const displayName = cursorUsername || user?.username || 'Collaborator'
+      const cursorLabel = isOwnerUser(user) ? `${displayName} - Owner` : displayName
       const cursorClassName = `cursor-${safeCursorId}`
       const selectionClassName = `selection-${safeCursorId}`
       let styleEl = document.getElementById(`style-${cursorClassName}`)
@@ -225,7 +234,7 @@ function EditorPage() {
           z-index: 10;
         }
         .${cursorClassName}::before {
-          content: ${JSON.stringify(displayName)};
+          content: ${JSON.stringify(cursorLabel)};
           position: absolute;
           top: -20px;
           left: -2px;
@@ -258,7 +267,7 @@ function EditorPage() {
         range: new monacoInstance.Range(position.lineNumber, position.column, position.lineNumber, position.column),
         options: {
           className: cursorClassName,
-          hoverMessage: { value: `${displayName} is editing here` },
+          hoverMessage: { value: `${cursorLabel} is editing here` },
           stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
         }
       })
@@ -273,7 +282,7 @@ function EditorPage() {
           ),
           options: {
             inlineClassName: selectionClassName,
-            hoverMessage: { value: `${displayName}'s selection` },
+            hoverMessage: { value: `${cursorLabel}'s selection` },
             stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
           }
         })
@@ -510,6 +519,7 @@ function EditorPage() {
 
     const handleOwnershipTransferred = (data) => {
       setUsers(data.users || [])
+      if (data.presence) setCursors(createPresenceMap(data.presence))
       toast(data.newOwner === username ? 'You are now the room owner.' : `${data.newOwner} is now the room owner.`)
       setChatMessages((previous) => [
         ...previous,
@@ -524,6 +534,7 @@ function EditorPage() {
 
     const handleNewOwner = (data) => {
       setUsers(data.users || [])
+      if (data.presence) setCursors(createPresenceMap(data.presence))
       toast(`${data.newOwner} is now the room owner.`)
       setChatMessages((previous) => [
         ...previous,
@@ -749,9 +760,19 @@ function EditorPage() {
     setExecutionResult(null)
 
     try {
+      const accessToken = await getSupabaseAccessToken()
+      if (!accessToken) {
+        setExecutionResult({ error: 'Sign in required', details: 'Code execution is available after signing in.' })
+        toast.error('Sign in to run code.')
+        return
+      }
+
       const response = await fetch(`${API_URL}/api/execute`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ code, language })
       })
 
@@ -786,9 +807,19 @@ function EditorPage() {
         ? [executionResult.stdout, executionResult.stderr, executionResult.compile_output].filter(Boolean).join('\n')
         : null
 
+      const accessToken = await getSupabaseAccessToken()
+      if (!accessToken) {
+        setAnalysisResult('Error: Sign in required for AI analysis.')
+        toast.error('Sign in to analyze code.')
+        return
+      }
+
       const response = await fetch(`${API_URL}/api/analyze`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({ code, language, compilerOutput })
       })
 
@@ -1157,13 +1188,17 @@ function EditorPage() {
                   {activeEditorUsers.map((user) => {
                     const cursorData = cursors[user.id]
                     const lineLabel = cursorData?.position?.lineNumber ? `Line ${cursorData.position.lineNumber}` : 'In room'
+                    const isOwner = isOwnerUser(user)
                     return (
                       <span
                         key={user.id || user.username}
                         className="inline-flex items-center gap-2 rounded border border-retro-border bg-retro-surface/95 px-2.5 py-1.5 font-mono-ui text-[10px] font-semibold text-retro-text shadow-[var(--shadow-pop)]"
+                        style={isOwner ? { borderColor: user.color || 'var(--accent-2)' } : undefined}
                       >
                         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: user.color || 'var(--accent-2)' }} />
+                        {isOwner && <Crown className="h-3 w-3 text-retro-accent" />}
                         <span className="max-w-28 truncate">{user.username}</span>
+                        {isOwner && <span className="rounded bg-[var(--accent-2-dim)] px-1 py-0.5 text-retro-accent">Owner</span>}
                         <span className="text-[var(--text-dim)]">{lineLabel}</span>
                       </span>
                     )
