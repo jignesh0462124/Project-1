@@ -76,6 +76,67 @@ function getStoredDensity() {
   return window.localStorage.getItem(DENSITY_KEY) === 'compact' ? 'compact' : 'comfortable'
 }
 
+function getPresenceKey(item) {
+  return item?.userId || item?.id || item?.username
+}
+
+function createPresenceMap(items = []) {
+  return items.reduce((presenceMap, item) => {
+    const key = getPresenceKey(item)
+    if (!key) return presenceMap
+
+    presenceMap[key] = {
+      username: item.username,
+      position: item.position || item.cursor || null,
+      selection: item.selection || null,
+      color: item.color,
+      lastActiveAt: item.lastActiveAt || Date.now()
+    }
+
+    return presenceMap
+  }, {})
+}
+
+function isRangeSelected(selection) {
+  if (!selection) return false
+  return selection.startLineNumber !== selection.endLineNumber || selection.startColumn !== selection.endColumn
+}
+
+function getSelectionPayload(selection) {
+  if (!selection) return null
+
+  return {
+    startLineNumber: selection.startLineNumber,
+    startColumn: selection.startColumn,
+    endLineNumber: selection.endLineNumber,
+    endColumn: selection.endColumn
+  }
+}
+
+function getEditorPresencePayload(editor) {
+  const position = editor?.getPosition()
+  if (!position) return null
+
+  return {
+    position: {
+      lineNumber: position.lineNumber,
+      column: position.column
+    },
+    selection: getSelectionPayload(editor.getSelection())
+  }
+}
+
+function hexToRgba(color, alpha) {
+  if (!/^#[0-9a-f]{6}$/i.test(color || '')) return `rgba(111, 240, 189, ${alpha})`
+
+  const value = color.slice(1)
+  const red = parseInt(value.slice(0, 2), 16)
+  const green = parseInt(value.slice(2, 4), 16)
+  const blue = parseInt(value.slice(4, 6), 16)
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
+}
+
 function EditorPage() {
   const { roomId } = useParams()
   const [searchParams] = useSearchParams()
@@ -138,21 +199,25 @@ function EditorPage() {
   const editorLineHeight = density === 'compact' ? 20 : 22
 
   useEffect(() => {
-    if (!editorRef.current || !window.monaco) return
+    if (!editorRef.current || !monacoRef.current) return
 
     const editor = editorRef.current
+    const monacoInstance = monacoRef.current
     const newDecorations = []
+    const activeStyleIds = new Set()
 
     Object.entries(cursors).forEach(([userId, cursorData]) => {
       if (userId === currentUserId) return
 
-      const { position, color, username: cursorUsername } = cursorData
+      const { position, selection, color, username: cursorUsername } = cursorData
       if (!position?.lineNumber || !position?.column) return
 
       const safeCursorId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '-')
       const displayName = cursorUsername || users.find((user) => user.id === userId)?.username || 'Collaborator'
       const cursorClassName = `cursor-${safeCursorId}`
+      const selectionClassName = `selection-${safeCursorId}`
       let styleEl = document.getElementById(`style-${cursorClassName}`)
+      activeStyleIds.add(`style-${cursorClassName}`)
       const styleContent = `
         .${cursorClassName} {
           border-left: 2px solid ${color || 'var(--accent)'} !important;
@@ -175,26 +240,51 @@ function EditorPage() {
           pointer-events: none;
           box-shadow: var(--shadow-pop);
         }
+        .${selectionClassName} {
+          background: ${hexToRgba(color || '#6FF0BD', 0.24)} !important;
+          border-bottom: 1px solid ${hexToRgba(color || '#6FF0BD', 0.72)};
+        }
       `
 
       if (!styleEl) {
         styleEl = document.createElement('style')
         styleEl.id = `style-${cursorClassName}`
+        styleEl.dataset.remotePresence = 'true'
         document.head.appendChild(styleEl)
       }
       styleEl.innerHTML = styleContent
 
       newDecorations.push({
-        range: new window.monaco.Range(position.lineNumber, position.column, position.lineNumber, position.column),
+        range: new monacoInstance.Range(position.lineNumber, position.column, position.lineNumber, position.column),
         options: {
           className: cursorClassName,
           hoverMessage: { value: `${displayName} is editing here` },
-          stickiness: window.monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+          stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
         }
       })
+
+      if (isRangeSelected(selection)) {
+        newDecorations.push({
+          range: new monacoInstance.Range(
+            selection.startLineNumber,
+            selection.startColumn,
+            selection.endLineNumber,
+            selection.endColumn
+          ),
+          options: {
+            inlineClassName: selectionClassName,
+            hoverMessage: { value: `${displayName}'s selection` },
+            stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+          }
+        })
+      }
     })
 
     decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations)
+
+    document.querySelectorAll('style[data-remote-presence="true"]').forEach((styleEl) => {
+      if (!activeStyleIds.has(styleEl.id)) styleEl.remove()
+    })
   }, [cursors, currentUserId, users])
 
   useEffect(() => {
@@ -220,6 +310,7 @@ function EditorPage() {
     const handleRoomJoined = (data) => {
       setUsers(data.users || [])
       setCurrentUserId(data.currentUserId || socket.id || null)
+      setCursors(createPresenceMap(data.presence || data.users || []))
       setCode(data.code || '')
       setLanguage(data.language || 'javascript')
       setIsJoining(false)
@@ -250,6 +341,7 @@ function EditorPage() {
 
     const handleUserJoined = (data) => {
       setUsers(data.users || [])
+      setCursors(createPresenceMap(data.presence || data.users || []))
       toast.success(`${data.username} joined.`)
       setChatMessages((previous) => [
         ...previous,
@@ -291,12 +383,24 @@ function EditorPage() {
       if (isCodeSyncingRef.current) return
       isCodeSyncingRef.current = true
       setCode(data.code || '')
-      if (data.userId && data.username && data.cursor) {
+      if (data.presence?.userId) {
+        setCursors((previous) => ({
+          ...previous,
+          [data.presence.userId]: {
+            username: data.presence.username,
+            position: data.presence.position,
+            selection: data.presence.selection,
+            color: data.presence.color,
+            lastActiveAt: Date.now()
+          }
+        }))
+      } else if (data.userId && data.username && data.cursor) {
         setCursors((previous) => ({
           ...previous,
           [data.userId]: {
             username: data.username,
             position: data.cursor,
+            selection: data.selection,
             color: data.color,
             lastActiveAt: Date.now()
           }
@@ -329,6 +433,23 @@ function EditorPage() {
         [cursorKey]: {
           username: data.username,
           position: data.position,
+          selection: data.selection,
+          color: data.color,
+          lastActiveAt: Date.now()
+        }
+      }))
+    }
+
+    const handlePresenceUpdated = (data) => {
+      const presenceKey = data?.userId || data?.username
+      if (!presenceKey) return
+
+      setCursors((previous) => ({
+        ...previous,
+        [presenceKey]: {
+          username: data.username,
+          position: data.position,
+          selection: data.selection,
           color: data.color,
           lastActiveAt: Date.now()
         }
@@ -489,6 +610,7 @@ function EditorPage() {
       socket.on('code-updated', handleCodeUpdated)
       socket.on('language-updated', handleLanguageUpdated)
       socket.on('cursor-updated', handleCursorUpdated)
+      socket.on('presence-updated', handlePresenceUpdated)
       socket.on('chat-received', handleChatReceived)
       socket.on('user-paused', handleUserPaused)
       socket.on('user-unpaused', handleUserUnpaused)
@@ -526,6 +648,7 @@ function EditorPage() {
       socket.off('code-updated', handleCodeUpdated)
       socket.off('language-updated', handleLanguageUpdated)
       socket.off('cursor-updated', handleCursorUpdated)
+      socket.off('presence-updated', handlePresenceUpdated)
       socket.off('chat-received', handleChatReceived)
       socket.off('user-paused', handleUserPaused)
       socket.off('user-unpaused', handleUserUnpaused)
@@ -576,26 +699,30 @@ function EditorPage() {
     clearTimeout(codeUpdateTimeoutRef.current)
     codeUpdateTimeoutRef.current = setTimeout(() => {
       if (socketRef.current?.connected) {
-        socketRef.current.emit('code-change', { roomId, code: value || '' })
+        const presence = getEditorPresencePayload(editorRef.current)
+        socketRef.current.emit('code-change', {
+          roomId,
+          code: value || '',
+          position: presence?.position,
+          selection: presence?.selection
+        })
       }
     }, 300)
   }
 
-  const handleCursorPositionChange = (event) => {
+  const handleEditorPresenceChange = () => {
     if (!editorRef.current || !socketRef.current?.connected) return
 
-    const position = event.position
-    if (!position) return
+    const presence = getEditorPresencePayload(editorRef.current)
+    if (!presence?.position) return
 
     clearTimeout(cursorUpdateTimeoutRef.current)
     cursorUpdateTimeoutRef.current = setTimeout(() => {
       socketRef.current.emit('cursor-move', {
         roomId,
         username,
-        position: {
-          lineNumber: position.lineNumber,
-          column: position.column
-        }
+        position: presence.position,
+        selection: presence.selection
       })
     }, 150)
   }
@@ -768,7 +895,11 @@ function EditorPage() {
     monaco.editor.setTheme(theme === 'light' ? 'collab-light' : 'collab-dark')
     editor.onDidChangeCursorPosition((event) => {
       setCursorPosition({ line: event.position.lineNumber, column: event.position.column })
-      handleCursorPositionChange(event)
+      handleEditorPresenceChange()
+    })
+    editor.onDidChangeCursorSelection((event) => {
+      setCursorPosition({ line: event.position.lineNumber, column: event.position.column })
+      handleEditorPresenceChange()
     })
   }
 

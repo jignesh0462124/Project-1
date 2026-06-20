@@ -69,12 +69,8 @@ function UserList({ users, currentUser, currentUserId, isHost, onPauseUser, onUn
                   </div>
 
                   <div className="mt-2 flex items-center gap-1.5 font-mono-ui text-[11px] text-[var(--muted)]">
-                    <span>typing</span>
-                    <span className="flex gap-0.5">
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                      <span className="typing-dot">.</span>
-                    </span>
+                    <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} />
+                    <span>In room</span>
                   </div>
                 </div>
 
