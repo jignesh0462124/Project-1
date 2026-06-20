@@ -50,6 +50,11 @@ app.use(helmet());
 // Parse JSON request bodies with size limits
 app.use(express.json({ limit: '1mb' }));
 
+// Health check endpoint for Render
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 const io = socketIo(server, {
   cors: {
     origin: CORS_ORIGINS,
@@ -120,6 +125,59 @@ function isValidCursorPosition(position) {
     && position.column > 0
     && position.lineNumber < 1000000
     && position.column < 100000;
+}
+
+function isValidSelectionRange(selection) {
+  if (!selection) return true;
+
+  return Number.isInteger(selection.startLineNumber)
+    && Number.isInteger(selection.startColumn)
+    && Number.isInteger(selection.endLineNumber)
+    && Number.isInteger(selection.endColumn)
+    && selection.startLineNumber > 0
+    && selection.startColumn > 0
+    && selection.endLineNumber > 0
+    && selection.endColumn > 0
+    && selection.startLineNumber < 1000000
+    && selection.endLineNumber < 1000000
+    && selection.startColumn < 100000
+    && selection.endColumn < 100000;
+}
+
+function normalizeSelection(selection) {
+  if (!selection || !isValidSelectionRange(selection)) return null;
+
+  return {
+    startLineNumber: selection.startLineNumber,
+    startColumn: selection.startColumn,
+    endLineNumber: selection.endLineNumber,
+    endColumn: selection.endColumn
+  };
+}
+
+function getUserPresence(user) {
+  return {
+    userId: user.id,
+    username: user.username,
+    color: user.color,
+    position: user.cursor || null,
+    selection: user.selection || null,
+    lastActiveAt: user.lastActiveAt || null
+  };
+}
+
+function getRoomPresence(room) {
+  return room.users.map(getUserPresence);
+}
+
+function updateUserPresence(user, position, selection) {
+  if (!user || !isValidCursorPosition(position) || !isValidSelectionRange(selection)) return null;
+
+  user.cursor = position;
+  user.selection = normalizeSelection(selection);
+  user.lastActiveAt = Date.now();
+
+  return getUserPresence(user);
 }
 
 function getProviderErrorDetails(error) {
@@ -193,6 +251,7 @@ io.on('connection', (socket) => {
       socket.userId = existingSocketUser.userId;
       socket.emit('room-joined', {
         users: getRoomUsers(room),
+        presence: getRoomPresence(room),
         code: room.code,
         language: room.language,
         roomId,
@@ -232,7 +291,9 @@ io.on('connection', (socket) => {
       role: isHost ? 'owner' : 'member',
       isHost,
       isPaused: false,
-      cursor: null
+      cursor: null,
+      selection: null,
+      lastActiveAt: Date.now()
     };
 
     room.users.push(newUser);
@@ -263,6 +324,7 @@ io.on('connection', (socket) => {
     // Send current room state to the joining user
     socket.emit('room-joined', {
       users: getRoomUsers(room),
+      presence: getRoomPresence(room),
       code: room.code,
       language: room.language,
       roomId,
@@ -274,6 +336,7 @@ io.on('connection', (socket) => {
       username,
       user: { ...newUser },
       users: getRoomUsers(room),
+      presence: getRoomPresence(room),
       color: userColor,
       isHost
     });
@@ -282,9 +345,9 @@ io.on('connection', (socket) => {
   });
 
   // Handle code changes
-  socket.on('code-change', ({ roomId, code }) => {
+  socket.on('code-change', ({ roomId, code, position, selection }) => {
     roomId = normalizeRoomId(roomId);
-    if (!roomId || !isValidCodePayload(code)) {
+    if (!roomId || !isValidCodePayload(code) || (position && !isValidCursorPosition(position)) || !isValidSelectionRange(selection)) {
       socket.emit('action-blocked', { message: 'Invalid code update.' });
       return;
     }
@@ -301,6 +364,7 @@ io.on('connection', (socket) => {
     }
 
     room.code = code;
+    const presence = position ? updateUserPresence(sender, position, selection) : null;
     roomService.updateRoomCode(roomId, code, room.language);
 
     // Broadcast to all other users in the room (not the sender)
@@ -309,8 +373,13 @@ io.on('connection', (socket) => {
       userId: sender?.id || socket.id,
       username: sender?.username || socket.username,
       color: sender?.color || 'var(--accent-2)',
-      cursor: sender?.cursor || null
+      cursor: sender?.cursor || null,
+      selection: sender?.selection || null,
+      presence
     });
+    if (presence) {
+      socket.to(roomId).emit('presence-updated', presence);
+    }
     console.log(`📝 Code updated in room ${roomId} by ${socket.username}`);
   });
 
@@ -341,10 +410,10 @@ io.on('connection', (socket) => {
   });
 
   // Handle cursor movements
-  socket.on('cursor-move', ({ roomId, username, position }) => {
+  socket.on('cursor-move', ({ roomId, username, position, selection }) => {
     roomId = normalizeRoomId(roomId);
     username = normalizeUsername(username);
-    if (!roomId || !username || !isValidCursorPosition(position)) return;
+    if (!roomId || !username || !isValidCursorPosition(position) || !isValidSelectionRange(selection)) return;
 
     if (!rooms.has(roomId)) return;
 
@@ -352,14 +421,16 @@ io.on('connection', (socket) => {
     const user = room.users.find(u => u.id === socket.id);
 
     if (user) {
-      user.cursor = position;
+      const presence = updateUserPresence(user, position, selection);
       // Broadcast cursor position to other users only
       socket.to(roomId).emit('cursor-updated', {
         userId: user.id,
         username: user.username,
         position,
+        selection: user.selection,
         color: user.color
       });
+      socket.to(roomId).emit('presence-updated', presence);
     }
   });
 
