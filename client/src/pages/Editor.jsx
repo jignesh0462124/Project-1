@@ -761,25 +761,23 @@ function EditorPage() {
 
     try {
       const accessToken = await getSupabaseAccessToken()
-      if (!accessToken) {
-        setExecutionResult({ error: 'Sign in required', details: 'Code execution is available after signing in.' })
-        toast.error('Sign in to run code.')
-        return
-      }
+      const headers = { 'Content-Type': 'application/json' }
+      if (accessToken) headers.Authorization = `Bearer ${accessToken}`
 
       const response = await fetch(`${API_URL}/api/execute`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json'
-        },
+        headers,
         body: JSON.stringify({ code, language })
       })
 
       const data = await response.json()
 
       if (!response.ok) {
-        setExecutionResult({ error: data.error, details: data.details })
+        const providerError = data.error && typeof data.error === 'object' ? data.error : null
+        setExecutionResult({
+          error: providerError?.message || data.error || 'Execution failed',
+          details: providerError?.details || data.details || (providerError?.status ? `${providerError.provider || 'provider'} returned HTTP ${providerError.status}` : null)
+        })
         toast.error('Execution failed.')
       } else {
         setExecutionResult(data)
@@ -809,8 +807,8 @@ function EditorPage() {
 
       const accessToken = await getSupabaseAccessToken()
       if (!accessToken) {
-        setAnalysisResult('Error: Sign in required for AI analysis.')
-        toast.error('Sign in to analyze code.')
+        setAnalysisResult('Error: Sign up or sign in required for AI analysis.')
+        toast.error('Sign up or sign in to use AI analysis.')
         return
       }
 
@@ -826,7 +824,9 @@ function EditorPage() {
       const data = await response.json()
 
       if (!response.ok) {
-        setAnalysisResult(`Error: ${data.error || 'Analysis failed'}`)
+        const providerError = data.error && typeof data.error === 'object' ? data.error : null
+        const authMessage = response.status === 401 ? 'Sign up or sign in required for AI analysis.' : null
+        setAnalysisResult(`Error: ${authMessage || providerError?.message || data.error || 'Analysis failed'}`)
         toast.error('Analysis failed.')
       } else {
         setAnalysisResult(data.analysis)
@@ -924,14 +924,16 @@ function EditorPage() {
     })
 
     monaco.editor.setTheme(theme === 'light' ? 'collab-light' : 'collab-dark')
-    editor.onDidChangeCursorPosition((event) => {
-      setCursorPosition({ line: event.position.lineNumber, column: event.position.column })
+    const syncCursorPosition = (event) => {
+      const position = event?.position || editor.getPosition()
+      if (!position?.lineNumber || !position?.column) return
+
+      setCursorPosition({ line: position.lineNumber, column: position.column })
       handleEditorPresenceChange()
-    })
-    editor.onDidChangeCursorSelection((event) => {
-      setCursorPosition({ line: event.position.lineNumber, column: event.position.column })
-      handleEditorPresenceChange()
-    })
+    }
+
+    editor.onDidChangeCursorPosition(syncCursorPosition)
+    editor.onDidChangeCursorSelection(syncCursorPosition)
   }
 
   const updateEditorFontSize = useCallback((size) => {

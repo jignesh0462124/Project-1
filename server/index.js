@@ -10,7 +10,7 @@ const rateLimit = require('express-rate-limit');
 const { DSA_PROBLEMS } = require('./problems');
 const { getUserFromAccessToken } = require('./config/supabase');
 const roomService = require('./services/roomService');
-const { requireAuth, optionalAuth } = require('./middleware/auth');
+const { requireAuth } = require('./middleware/auth');
 
 // JDoodle API language mapping (free: 200 credits/day, email signup only)
 const JDOODLE_LANGUAGES = {
@@ -262,6 +262,44 @@ function getProviderErrorDetails(error) {
   if (error.cause?.message) return error.cause.message;
 
   return 'The external provider could not be reached. Check the backend terminal, network access, and provider credentials.';
+}
+
+
+function getSafeProviderMessage(data, fallback) {
+  if (!data) return fallback;
+  if (typeof data === 'string') return data.slice(0, 500);
+  if (typeof data.error === 'string') return data.error;
+  if (typeof data.message === 'string') return data.message;
+  if (typeof data.error?.message === 'string') return data.error.message;
+  return fallback;
+}
+
+function getJdoodleCredentialStatus() {
+  const clientId = process.env.JDOODLE_CLIENT_ID || '';
+  const clientSecret = process.env.JDOODLE_CLIENT_SECRET || '';
+
+  return {
+    clientIdExists: Boolean(clientId),
+    clientIdLength: clientId.length,
+    clientSecretExists: Boolean(clientSecret),
+    clientSecretLength: clientSecret.length,
+  };
+}
+
+function logJdoodleCredentialStatus() {
+  console.info('[jdoodle] credential status:', getJdoodleCredentialStatus());
+}
+
+function createProviderError({ message, provider, status, details }) {
+  return {
+    success: false,
+    error: {
+      message,
+      provider,
+      status,
+      ...(details ? { details } : {}),
+    },
+  };
 }
 
 io.on('connection', (socket) => {
@@ -949,8 +987,8 @@ app.get('/api/problems', requireAuth, (req, res) => {
   res.json({ problems: DSA_PROBLEMS });
 });
 
-// Code execution endpoint via JDoodle — auth + rate limited to protect API quota
-app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
+// Code execution endpoint via JDoodle - public room users may compile, rate limited to protect API quota
+app.post('/api/execute', executeLimiter, async (req, res) => {
   try {
     const { code, language } = req.body;
 
@@ -973,11 +1011,15 @@ app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
 
     const clientId = process.env.JDOODLE_CLIENT_ID;
     const clientSecret = process.env.JDOODLE_CLIENT_SECRET;
+    logJdoodleCredentialStatus();
 
     if (!clientId || !clientSecret) {
-      return res.status(500).json({
-        error: 'JDoodle API is not configured. Add JDOODLE_CLIENT_ID and JDOODLE_CLIENT_SECRET to server/.env',
-      });
+      return res.status(500).json(createProviderError({
+        message: 'JDoodle API is not configured.',
+        provider: 'jdoodle',
+        status: 500,
+        details: 'Set JDOODLE_CLIENT_ID and JDOODLE_CLIENT_SECRET on the server.',
+      }));
     }
 
     // Send to JDoodle API
@@ -993,8 +1035,19 @@ app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
       {
         headers: { 'Content-Type': 'application/json' },
         timeout: 30000,
+        validateStatus: () => true,
       }
     );
+
+    if (response.status < 200 || response.status >= 300) {
+      const message = getSafeProviderMessage(response.data, response.status === 401 ? 'Unauthorized' : 'JDoodle API error');
+      console.warn('[jdoodle] non-2xx response:', { status: response.status, message });
+      return res.status(response.status).json(createProviderError({
+        message,
+        provider: 'jdoodle',
+        status: response.status,
+      }));
+    }
 
     const result = response.data;
 
@@ -1040,26 +1093,13 @@ app.post('/api/execute', executeLimiter, requireAuth, async (req, res) => {
       const status = err.response.status;
       const data = err.response.data;
 
-      // JDoodle specific errors
-      if (data && data.error) {
-        return res.status(status).json({
-          error: 'JDoodle API Error',
-          details,
-        });
-      }
-
-      // Rate limit or other HTTP errors
-      if (status === 429) {
-        return res.status(429).json({
-          error: 'Rate Limit Exceeded',
-          details: 'Too many requests. Please wait a moment before running code again.',
-        });
-      }
-
-      return res.status(status).json({
-        error: 'JDoodle API error',
-        details,
-      });
+      const message = getSafeProviderMessage(data, status === 401 ? 'Unauthorized' : 'JDoodle API error');
+      return res.status(status).json(createProviderError({
+        message,
+        provider: 'jdoodle',
+        status,
+        details: typeof details === 'string' ? details : undefined,
+      }));
     }
 
     res.status(502).json({
