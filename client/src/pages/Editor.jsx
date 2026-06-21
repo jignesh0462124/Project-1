@@ -821,13 +821,14 @@ function EditorPage() {
         body: JSON.stringify({ code, language, compilerOutput })
       })
 
-      const data = await response.json()
+      const data = await response.json().catch(() => ({}))
 
       if (!response.ok) {
         const providerError = data.error && typeof data.error === 'object' ? data.error : null
-        const authMessage = response.status === 401 ? 'Sign up or sign in required for AI analysis.' : null
-        setAnalysisResult(`Error: ${authMessage || providerError?.message || data.error || 'Analysis failed'}`)
-        toast.error('Analysis failed.')
+        const authMessage = response.status === 401 && data.code === 'AUTH_REQUIRED' ? 'Sign up or sign in required for AI analysis.' : null
+        const message = authMessage || data.message || providerError?.message || data.error || 'Analysis failed'
+        setAnalysisResult(`Error: ${message}`)
+        toast.error(message)
       } else {
         setAnalysisResult(data.analysis)
         toast.success('Analysis complete.')
@@ -924,8 +925,8 @@ function EditorPage() {
     })
 
     monaco.editor.setTheme(theme === 'light' ? 'collab-light' : 'collab-dark')
-    const syncCursorPosition = (event) => {
-      const position = event?.position || editor.getPosition()
+    const syncCursorPosition = () => {
+      const position = editor.getPosition()
       if (!position?.lineNumber || !position?.column) return
 
       setCursorPosition({ line: position.lineNumber, column: position.column })

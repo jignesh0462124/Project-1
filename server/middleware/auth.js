@@ -1,4 +1,4 @@
-const { getUserFromAccessToken } = require('../config/supabase');
+const { validateAccessToken } = require('../config/supabase');
 
 function getBearerToken(req) {
   const authHeader = req.headers.authorization;
@@ -8,7 +8,8 @@ function getBearerToken(req) {
 
 async function optionalAuth(req, _res, next) {
   try {
-    req.user = await getUserFromAccessToken(getBearerToken(req));
+    const validation = await validateAccessToken(getBearerToken(req));
+    req.user = validation.user;
   } catch (error) {
     console.warn('[auth] optionalAuth failed:', error.message);
     req.user = null;
@@ -18,20 +19,21 @@ async function optionalAuth(req, _res, next) {
 
 async function requireAuth(req, res, next) {
   try {
-    const user = await getUserFromAccessToken(getBearerToken(req));
+    const validation = await validateAccessToken(getBearerToken(req));
 
-    if (!user) {
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'A valid Supabase access token is required.'
+    if (!validation.user) {
+      return res.status(validation.status || 401).json({
+        error: validation.error || 'Unauthorized',
+        message: validation.message || 'A valid Supabase access token is required.',
+        code: validation.code || 'AUTH_FAILED',
       });
     }
 
-    req.user = user;
+    req.user = validation.user;
     return next();
   } catch (error) {
     console.error('[auth] requireAuth failed:', error.message);
-    return res.status(500).json({ error: 'Auth middleware failed' });
+    return res.status(500).json({ error: 'Auth middleware failed', code: 'AUTH_MIDDLEWARE_FAILED' });
   }
 }
 
