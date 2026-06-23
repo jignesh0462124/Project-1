@@ -18,8 +18,8 @@
       "React"
     ],
     "description": "Real-time Collaborative Code Editor - Retro Gaming Theme",
-    "analyzedAt": "2026-06-23T05:35:41.895Z",
-    "gitCommitHash": "79653913cca1666dafe06c2d62436a30e89c5780"
+    "analyzedAt": "2026-06-23T15:40:20.201Z",
+    "gitCommitHash": "e26e6a127f7f2f4d4addc813d3f3b28a2bc0af69"
   },
   "nodes": [
     {
@@ -2266,7 +2266,7 @@
       "filePath": "client/src/pages/Home.jsx",
       "lineRange": [
         9,
-        279
+        285
       ],
       "summary": "Home",
       "tags": [],
@@ -2278,8 +2278,8 @@
       "name": "ProductPreview",
       "filePath": "client/src/pages/Home.jsx",
       "lineRange": [
-        281,
-        340
+        287,
+        345
       ],
       "summary": "ProductPreview",
       "tags": [],

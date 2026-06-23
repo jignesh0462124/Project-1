@@ -1,202 +1,112 @@
 # Collaborative Platform
 
-Collaborative Platform is a real-time collaborative code editor for small coding sessions, interviews, teaching, pair programming, and hackathon teams. Users create or join a room, edit code together in Monaco Editor, chat in the same workspace, run supported code through JDoodle, and request AI code feedback through OpenRouter.
+A focused workspace for people who need to write code together in real time: interviews, classrooms, pair programming, hackathon teams, and quick review sessions.
 
-The application is split into a React/Vite client and a Node.js/Express server. Real-time collaboration is handled with Socket.io. Live room state is kept in memory for low-latency editing, with optional Supabase persistence for room metadata, membership records, chat messages, code snapshots, and solved-problem records when Supabase is configured.
+Collaborative Platform gives each room a shared Monaco editor, live cursors, chat, owner controls, runnable code, structured AI review, and a small DSA practice flow. The important bit is that editing is not last-write-wins anymore: room text is merged through Yjs so multiple people can type at the same time without wiping each other out.
 
-## What The Project Does
+## Why It Matters
 
-- Creates short room IDs for collaborative sessions.
-- Allows up to 4 users per room.
-- Synchronizes code changes between connected users.
-- Synchronizes language changes and problem boilerplate.
-- Shows remote cursor positions in Monaco Editor.
-- Provides in-room chat.
-- Assigns room ownership to the first user.
-- Lets the owner pause, unpause, kick users, and transfer ownership.
-- Includes a small DSA problem set with boilerplate code.
-- Runs code through the JDoodle API for supported languages after a user has joined a room.
-- Sends code and compiler output to OpenRouter for AI analysis.
-- Supports dark and light UI themes.
+Most lightweight collaborative editors fall apart at the exact moment two people type together. This project is built around that moment. The editor uses CRDT document updates over the existing Socket.IO connection, while room presence, chat, roles, compiler access, and problem workflow stay on the same real-time channel.
 
-## Tech Stack
+The result is a small but serious collaborative coding room:
 
-### Client
+- everyone in the room can edit at the same time
+- remote cursors move independently from text updates
+- compiler runs are protected by room-issued execution tokens
+- AI feedback is structured into fixes, quality, and complexity
+- owners can pause, unpause, kick, transfer ownership, and manage problems
+- the interface supports polished light and dark modes
 
-- React 18
-- Vite
-- React Router
-- Monaco Editor via `@monaco-editor/react`
-- Socket.io client
-- Tailwind CSS
-- Lucide React icons
-- React Hot Toast
+## Feature Snapshot
 
-### Server
+- Real-time collaborative Monaco editor powered by Yjs
+- Socket.IO rooms with live roster, chat, cursor presence, and ownership
+- Short room codes for quick create/join flows
+- Room owner controls: pause, unpause, kick, transfer ownership
+- JDoodle code execution for supported languages
+- OpenRouter AI analyzer with tabbed structured output
+- Built-in DSA problem selection, reset, submit, and solved flow
+- Supabase auth support for signed-in AI analysis
+- Optional Supabase server-side persistence for rooms, members, chat, snapshots, and solved records
+- Professional responsive UI with light and dark themes
+- Graphify output in `graphify-out/` for codebase understanding
 
-- Node.js
-- Express
-- Socket.io
-- Axios
-- Helmet
-- CORS
-- Dotenv
-- UUID
+## Stack
 
-### External Services
+| Area | Tech |
+| --- | --- |
+| Client | React 18, Vite, Tailwind CSS, Monaco Editor, y-monaco, Socket.IO client |
+| Server | Node.js, Express, Socket.IO, Yjs, Helmet, rate limiting |
+| Compiler | JDoodle API |
+| AI review | OpenRouter |
+| Auth and persistence | Supabase, optional service-role-backed persistence |
+| Tooling | Node test runner, Supertest, ESLint, Graphify |
 
-- JDoodle: remote code execution.
-- OpenRouter: AI code analysis, currently configured for `deepseek/deepseek-v4-flash`.
-
-## Repository Layout
+## Project Layout
 
 ```text
-collaborative-platform/
-  client/
-    index.html
-    package.json
-    vite.config.js
-    tailwind.config.js
-    src/
-      App.jsx
-      main.jsx
-      socket.js
-      pages/
-        Home.jsx
-        Editor.jsx
-      components/
-        AnalysisPanel.jsx
-        ChatPanel.jsx
-        LanguageSelector.jsx
-        OutputPanel.jsx
-        ProblemPanel.jsx
-        RoomHeader.jsx
-        ThemeContext.jsx
-        ThemeToggle.jsx
-        UserList.jsx
-      constants/
-        boilerplates.js
-        languages.js
-      styles/
-        pixel.css
-  server/
-    index.js
-    problems.js
-    package.json
-    .env.example
-  package.json
-  README.md
+client/
+  src/
+    pages/Home.jsx          # lobby and room entry
+    pages/Editor.jsx        # collaborative IDE workspace
+    components/             # panels, auth, chat, output, analysis, users
+    constants/              # languages and boilerplates
+    styles/pixel.css        # design tokens and shared UI classes
+server/
+  index.js                  # Socket.IO room lifecycle and realtime events
+  routes/index.js           # HTTP API routes
+  providers/                # JDoodle and OpenRouter integrations
+  collabDocument.js         # Yjs document helpers
+  executionToken.js         # room compiler token signing/verification
+  validators.js             # shared request and socket validation
+  test/                     # route, provider, token, Yjs, and validator tests
+supabase/
+  migrations/               # database schema and RLS policies
+graphify-out/               # generated architecture graph and wiki
 ```
 
-## Architecture
+## How Collaboration Works
 
 ```text
-Browser
-  |
-  | React app on Vite
-  | - lobby
-  | - editor
-  | - chat
-  | - room controls
-  |
-  | HTTP requests
-  |   GET  /api/create-room
-  |   GET  /api/problems
-  |   POST /api/execute
-  |   POST /api/analyze
-  |
-  | Socket.io events
-  |   join-room
-  |   code-change
-  |   language-change
-  |   cursor-move
-  |   chat-message
-  |   owner controls
-  v
-Node/Express server
-  |
-  | In-memory live room store
-  | rooms = Map<roomId, roomState>
-  |
-  | Optional Supabase persistence
-  | - room metadata
-  | - members
-  | - chat messages
-  | - code snapshots
-  | - solved problems
-  |
-  | External APIs
-  | - JDoodle for execution
-  | - OpenRouter for analysis
+Browser Monaco model
+  <-> y-monaco binding
+  <-> local Y.Doc
+  <-> Socket.IO document-update event
+  <-> server room Y.Doc
+  <-> other room members
 ```
 
-### Room State
+Normal typing uses `document-update` Yjs deltas. Cursor movement uses separate presence events. This separation keeps collaborator cursors from jumping when someone else types.
 
-Each room is stored in memory with this shape conceptually:
-
-```js
-{
-  users: [],
-  code: "",
-  language: "javascript",
-  currentProblem: null,
-  solvedProblems: Set,
-  problemBoilerplates: {},
-  cleanupTimeout: null
-}
-```
-
-The active collaboration session is in-memory first: cursors, connected sockets, ownership handoff state, and unsaved live state are tied to the running server process. When Supabase is configured, the server also persists room metadata, members, chat messages, snapshots, and solved-problem records. A server restart still clears connected socket presence and any live state that has not been saved to Supabase.
-
-## Main User Flow
-
-1. A user enters a display name and chooses a default language.
-2. The user creates a room or joins an existing room.
-3. The client connects to the Socket.io server.
-4. The server creates the room if needed and sends the current room state.
-5. The editor screen opens with users, chat, Monaco Editor, output, AI analysis, and problem controls.
-6. Code changes are debounced on the client and broadcast to other room members.
-7. The room owner can manage members and select/reset DSA problems.
-8. Users can run code or ask for AI analysis from the editor toolbar.
+The server keeps one `Y.Doc` per active room and sends `documentState` to late joiners. Language changes and problem resets replace the shared Yjs text and broadcast that update to every client.
 
 ## Getting Started
 
 ### Requirements
 
-- Node.js 18 or newer
+- Node.js 18+
 - npm
-- A modern browser
-- JDoodle credentials if you want code execution
-- OpenRouter API key if you want AI analysis
+- A browser
+- JDoodle credentials for compiler execution
+- OpenRouter key for hosted AI analysis
+- Supabase project if you want auth or persistence
 
-### Install Dependencies
-
-From the project root:
+### Install
 
 ```bash
 npm run install:all
 ```
 
-Or install each package manually:
+### Environment Files
 
-```bash
-npm install
-cd server
-npm install
-cd ../client
-npm install
-```
-
-### Configure Environment Variables
-
-Create server and client env files:
+Create local env files:
 
 ```bash
 cp server/.env.example server/.env
 cp client/.env.example client/.env
 ```
 
-On Windows PowerShell:
+PowerShell:
 
 ```powershell
 Copy-Item server/.env.example server/.env
@@ -212,16 +122,27 @@ NODE_ENV=development
 PORT=3001
 CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key-here
+
+EXECUTION_TOKEN_SECRET=change-this-to-a-long-random-value
+
 JDOODLE_CLIENT_ID=your_client_id_here
 JDOODLE_CLIENT_SECRET=your_client_secret_here
 
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 OPENROUTER_MODEL=deepseek/deepseek-v4-flash
+OPENROUTER_FALLBACK_MODELS=
 OPENROUTER_HTTP_REFERER=http://localhost:5173
 OPENROUTER_APP_TITLE=Collaborative Platform
+ANALYSIS_FALLBACK_ON_ERROR=true
 ```
 
-Do not commit real API keys. The local `server/.env` file should stay private.
+Notes:
+
+- `SUPABASE_SERVICE_ROLE_KEY` belongs on the server only. Never expose it in the client.
+- If the service role key is missing, the app still works in memory; Supabase room persistence is skipped.
+- `EXECUTION_TOKEN_SECRET` should stay stable across restarts and server instances so compiler tokens verify consistently.
 
 ### Client Environment
 
@@ -230,80 +151,67 @@ Do not commit real API keys. The local `server/.env` file should stay private.
 ```env
 VITE_SOCKET_URL=http://localhost:3001
 VITE_API_URL=http://localhost:3001
+
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_PUBLISHABLE_KEY=your-publishable-key-here
 ```
 
-`VITE_SOCKET_URL` is used by the Socket.io client and lobby room creation. `VITE_API_URL` is used by the editor for code execution and AI analysis.
+## Run Locally
 
-### Run In Development
-
-From the project root:
+Start the full app from the project root:
 
 ```bash
 npm run dev
 ```
 
-This starts:
+Default local URLs:
 
-- Server: `http://localhost:3001`
 - Client: `http://localhost:5173`
+- Server: `http://localhost:3001`
 
-You can also run them separately:
+Run one side at a time:
 
 ```bash
-cd server
-npm run dev
+npm run server:dev
+npm run client:dev
 ```
 
-```bash
-cd client
-npm run dev
-```
-
-### Build The Client
+## Quality Checks
 
 ```bash
+npm run server:test
+cd client && npm run lint
 npm run build
+node scripts/graphify-update.mjs .
 ```
 
-This runs the Vite production build from `client/`.
+The production build intentionally code-splits Monaco into lazy chunks so the lobby stays light.
 
-## API Reference
+## API
 
 ### `GET /api/create-room`
 
-Creates an 8-character room ID.
-
-Response:
+Returns an eight-character room code.
 
 ```json
-{
-  "roomId": "ABC12345"
-}
+{ "roomId": "ABC12345" }
 ```
 
 ### `GET /api/health`
 
-Returns server status and active room count.
+Basic server health endpoint for local checks and Render.
 
-Response:
+### `GET /api/health/details`
 
-```json
-{
-  "status": "ok",
-  "rooms": 1,
-  "timestamp": "2026-06-17T12:00:00.000Z"
-}
-```
+Authenticated detailed health response with room and persistence status.
 
 ### `GET /api/problems`
 
-Returns the built-in DSA problem list from `server/problems.js`.
+Returns the built-in DSA problem list. Requires auth.
 
 ### `POST /api/execute`
 
-Runs code through JDoodle. The caller must first join a room over Socket.io and use the `executionToken` returned by `room-joined`.
-
-Request:
+Runs code through JDoodle. A user must join a room first and send the `executionToken` received in `room-joined`.
 
 ```json
 {
@@ -314,251 +222,134 @@ Request:
 }
 ```
 
-Supported execution languages:
-
-- JavaScript
-- TypeScript
-- Python
-- Java
-- C++
-- Go
-- Rust
-
-HTML is available as an editor language, but it is not sent to JDoodle for execution.
+Supported execution languages include JavaScript, TypeScript, Python, Java, C++, Go, and Rust.
 
 ### `POST /api/analyze`
 
-Sends code and optional compiler output to OpenRouter for AI feedback.
-
-Request:
+Requires Supabase auth. Sends code and optional compiler output to OpenRouter. The response is structured for the tabbed UI:
 
 ```json
 {
-  "code": "const x = 1 + 1;",
-  "language": "javascript",
-  "compilerOutput": "2"
+  "fixes": [
+    {
+      "severity": "warning",
+      "title": "Prefer strict equality",
+      "description": "Use === instead of == to avoid implicit type coercion."
+    }
+  ],
+  "quality": {
+    "score": 82,
+    "grade": "B",
+    "items": [
+      { "category": "Readability", "comment": "The function names are clear." }
+    ]
+  },
+  "complexity": {
+    "time": "O(n)",
+    "space": "O(1)",
+    "explanation": "The code scans the input once and keeps constant extra state."
+  }
 }
 ```
 
-Response:
+If OpenRouter is unavailable and fallback is enabled, the server returns the same shape with local fallback notes.
 
-```json
-{
-  "analysis": "Markdown-formatted feedback..."
-}
-```
+## Realtime Events
 
-The default model is controlled by `OPENROUTER_MODEL`.
+The main room events are:
 
-## Socket.io Events
-
-### Client To Server
-
-| Event | Payload | Purpose |
+| Direction | Event | Purpose |
 | --- | --- | --- |
-| `join-room` | `{ roomId, username, language }` | Join or create a room. |
-| `code-change` | `{ roomId, code }` | Update room code and broadcast to others. |
-| `language-change` | `{ roomId, language, code }` | Change language and optionally reset code. |
-| `cursor-move` | `{ roomId, username, position }` | Broadcast cursor position to other users. |
-| `chat-message` | `{ roomId, username, message }` | Send a room chat message. |
-| `pause-user` | `{ roomId, targetUsername }` | Owner pauses a member. |
-| `unpause-user` | `{ roomId, targetUsername }` | Owner unpauses a member. |
-| `kick-user` | `{ roomId, targetUsername }` | Owner removes a member. |
-| `transfer-ownership` | `{ roomId, targetUsername }` | Owner transfers room ownership. |
-| `get-problems` | none | Request the problem list. |
-| `select-problem` | `{ roomId, problemId }` | Owner selects a problem. |
-| `select-random-problem` | `{ roomId }` | Owner selects a random unsolved problem. |
-| `submit-solution` | `{ roomId, code, language }` | Submit current code for problem workflow feedback. |
-| `mark-solved` | `{ roomId, problemId }` | Owner marks a problem solved. |
-| `reset-problem` | `{ roomId }` | Reset current problem boilerplate. |
-| `leave-room` | `{ roomId, username }` | Leave the room. |
+| Client -> server | `join-room` | Join or create a room |
+| Server -> client | `room-joined` | Initial users, language, Yjs `documentState`, and execution token |
+| Client -> server | `document-update` | Yjs document delta for collaborative text editing |
+| Server -> client | `document-update` | Yjs delta broadcast to other room members |
+| Client -> server | `cursor-move` | Cursor and selection presence |
+| Server -> client | `cursor-updated` | Single-user cursor presence delta |
+| Server -> client | `presence-removed` | Remove a departed user's cursor |
+| Client -> server | `language-change` | Change language and optionally replace document text |
+| Server -> client | `language-updated` | Language and document replacement update |
+| Client -> server | `chat-message` | Send room chat |
+| Server -> client | `chat-received` | Receive room chat |
+| Client -> server | `pause-user`, `unpause-user`, `kick-user`, `transfer-ownership` | Owner controls |
+| Client -> server | `select-problem`, `select-random-problem`, `reset-problem`, `submit-solution`, `mark-solved` | Problem workflow |
 
-### Server To Client
+`code-change` still exists as a legacy compatibility path, but normal typing uses Yjs `document-update`.
 
-| Event | Payload | Purpose |
-| --- | --- | --- |
-| `room-joined` | `{ users, code, language, roomId, currentUserId, executionToken }` | Initial room state and short-lived execution capability for a joining user. |
-| `room-full` | `{ message }` | Room rejected because it has 4 users. |
-| `username-taken` | `{ message }` | Room rejected because the username already exists. |
-| `user-joined` | `{ username, users, color, isHost }` | A new user joined. |
-| `user-left` | `{ username, users, isKicked }` | A user left or was removed. |
-| `code-updated` | `{ code }` | Another user changed the code. |
-| `language-updated` | `{ language, code }` | Room language changed. |
-| `cursor-updated` | `{ username, position, color }` | Remote cursor update. |
-| `chat-received` | `{ username, message, timestamp }` | New chat message. |
-| `action-blocked` | `{ message }` | A paused user tried to edit. |
-| `user-paused` | `{ targetUsername, users }` | User pause state changed. |
-| `user-unpaused` | `{ targetUsername, users }` | User pause state changed. |
-| `user-kicked` | `{ targetUsername, users, kickedBy }` | User was removed by owner. |
-| `kicked-from-room` | `{ roomId }` | Current user was kicked. |
-| `ownership-transferred` | `{ newOwner, previousOwner, users }` | Owner changed manually. |
-| `new-owner` | `{ newOwner, users }` | Owner changed because the previous owner left. |
-| `problem-selected` | `{ problem, code, solvedBy }` | New problem selected. |
-| `problem-solved` | `{ problemId, problemTitle, solvedBy, solvedProblems }` | Problem marked solved. |
-| `problem-reset` | `{ code, problem }` | Problem code reset. |
-| `submission-result` | `{ success, message, ... }` | Result of the submit action. |
+## Deployment
 
-## Frontend Structure
+The app is split into a Web Service and a Static Site. `render.yaml` contains the Render blueprint.
 
-### Routes
+### Render Backend
 
-- `/`: Lobby for creating or joining rooms.
-- `/room/:roomId`: Main collaborative editor.
-
-### Important Files
-
-- `client/src/socket.js`: Socket.io singleton with reconnect handling.
-- `client/src/pages/Home.jsx`: Lobby, username input, language selection, room creation/joining.
-- `client/src/pages/Editor.jsx`: Main editor state, Socket.io event handling, code execution, AI analysis, responsive layout.
-- `client/src/components/ChatPanel.jsx`: Room chat UI.
-- `client/src/components/UserList.jsx`: Users, owner controls, paused state.
-- `client/src/components/ProblemPanel.jsx`: DSA problem viewer and owner controls.
-- `client/src/components/OutputPanel.jsx`: Code execution result display.
-- `client/src/components/AnalysisPanel.jsx`: AI analysis result display.
-- `client/src/styles/pixel.css`: Global theme tokens, dark/light mode styling, shared UI classes.
-
-## Design And Theming
-
-The app uses a polished retro developer-console style. The visual system is defined mostly in `client/src/styles/pixel.css`.
-
-The theme system uses CSS variables for:
-
-- Background
-- Surface
-- Panel
-- Border
-- Primary accent
-- Secondary accent
-- Text
-- Warning/success colors
-- Shadow treatment
-
-Dark and light modes are controlled by `ThemeContext.jsx`, persisted in `localStorage`, and applied as a class on the document root.
-
-## Deployment Notes
-
-The client and server should be deployed separately.
-
-### Client
-
-The client is a static Vite build and can be deployed to Cloudflare Pages, Vercel, Netlify, or any static host.
-
-```bash
-cd client
-npm run build
-```
-
-For Cloudflare Pages:
-
-```bash
-npm run deploy:cf
-```
-
-Set these client environment variables in the hosting dashboard:
-
-```env
-VITE_SOCKET_URL=https://your-server-domain.com
-VITE_API_URL=https://your-server-domain.com
-```
-
-### Server
-
-The server needs a Node.js host that supports WebSockets, such as Railway, Render, Fly.io, a VPS, or similar.
-
-Set production server variables:
+Use the server service. Set production env vars in Render:
 
 ```env
 NODE_ENV=production
-PORT=3001
-CORS_ORIGINS=https://your-client-domain.com
+PORT=10000
+CORS_ORIGINS=https://your-client-domain.onrender.com
+SUPABASE_URL=...
+SUPABASE_SERVICE_ROLE_KEY=...
+EXECUTION_TOKEN_SECRET=...
 JDOODLE_CLIENT_ID=...
 JDOODLE_CLIENT_SECRET=...
 OPENROUTER_API_KEY=...
 OPENROUTER_MODEL=deepseek/deepseek-v4-flash
-OPENROUTER_HTTP_REFERER=https://your-client-domain.com
+OPENROUTER_HTTP_REFERER=https://your-client-domain.onrender.com
 OPENROUTER_APP_TITLE=Collaborative Platform
 ```
 
-## Known Limitations
+### Render or Static Frontend
 
-- Live collaboration state is in-memory first; connected socket presence is lost when the server restarts.
-- Supabase persistence is optional and covers room metadata, members, chat, snapshots, and solved-problem records, not every live cursor/presence detail.
-- Code execution requires a short-lived room execution token issued after joining a room.
-- Code execution depends on JDoodle limits and credentials.
-- AI analysis depends on OpenRouter key, credits, rate limits, and model availability.
-- Problem submission is currently a workflow signal, not a full automated judge against test cases.
-- The server is designed for small rooms, currently capped at 4 users.
+Set:
+
+```env
+VITE_SOCKET_URL=https://your-server-domain.onrender.com
+VITE_API_URL=https://your-server-domain.onrender.com
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
+```
+
+After changing env vars, redeploy both services. The client build bakes in `VITE_*` values.
 
 ## Troubleshooting
 
-### The client cannot connect to the server
+### Render does not show my latest changes
 
-- Make sure the server is running on `PORT=3001`.
-- Check `client/.env`.
-- Check `CORS_ORIGINS` in `server/.env`.
-- Restart both client and server after changing env files.
-
-### `OpenRouter rate limit reached`
-
-The OpenRouter request reached the service, but the selected model or account is rate-limited or out of quota.
-
-Fixes:
-
-- Wait and try again later.
-- Add credits to the OpenRouter account.
-- Change `OPENROUTER_MODEL` to another available model.
-- Restart the server after changing `.env`.
-
-### `OpenRouter authentication failed`
-
-The key was rejected.
-
-Fixes:
-
-- Check `OPENROUTER_API_KEY`.
-- Make sure there are no extra spaces around the value.
-- Restart the server after editing `.env`.
-
-### Code execution fails
-
-- Check `JDOODLE_CLIENT_ID` and `JDOODLE_CLIENT_SECRET`.
-- Confirm the selected language is supported for execution.
-- Check JDoodle usage limits.
-
-### Room is full
-
-Rooms are capped at 4 users. Create a new room or wait for someone to leave.
-
-### Username is already taken
-
-Usernames must be unique inside a room. Choose a different display name.
-
-## Useful Commands
+Check that the commit was pushed to the GitHub branch Render watches:
 
 ```bash
-npm run dev
-npm run build
-npm run install:all
+git log -1 --oneline
+git branch -vv
+git push origin master
 ```
 
-```bash
-cd server
-npm run dev
-npm start
-```
+A local commit is not enough for Render. Render deploys from GitHub.
 
-```bash
-cd client
-npm run dev
-npm run build
-npm run preview
-npm run lint
-```
+### Supabase says RLS blocked `rooms` or `room_members`
 
-## Development Notes
+The backend is using a public key for server writes or the service role key is missing. Add `SUPABASE_SERVICE_ROLE_KEY` to the server environment only, then restart/redeploy.
 
-- Keep secrets in `.env` files only.
-- Update `.env.example` when adding new environment variables.
-- Keep Socket.io event names consistent between `server/index.js` and `client/src/pages/Editor.jsx`.
-- Run `npm run build` before deploying the client.
-- Restart the server after changing backend environment variables.
+### `Room execution token rejected`
+
+Rejoin the room after a server restart. Also verify:
+
+- `VITE_API_URL` points to the same server as `VITE_SOCKET_URL`
+- `EXECUTION_TOKEN_SECRET` is stable in production
+- the room token has not expired
+
+### AI analysis requires sign-in
+
+`POST /api/analyze` is protected by Supabase auth. Configure the client Supabase publishable key and sign in before running analysis.
+
+### Compiler fails
+
+Check JDoodle credentials, selected language support, and JDoodle quota. The output panel shows provider errors when JDoodle returns them.
+
+## Notes For Contributors
+
+- Keep realtime event contracts in sync between `server/index.js` and `client/src/pages/Editor.jsx`.
+- Do not put service role keys in client env files.
+- Run server tests before changing auth, execution, Yjs sync, or analyzer code.
+- Regenerate `graphify-out` after meaningful architecture changes.
+- Push commits to GitHub before expecting Render to redeploy.

@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "79653913cca1666dafe06c2d62436a30e89c5780",
-  "generatedAt": "2026-06-23T05:35:41.956Z",
+  "gitCommitHash": "e26e6a127f7f2f4d4addc813d3f3b28a2bc0af69",
+  "generatedAt": "2026-06-23T15:40:20.268Z",
   "files": {
     ".agents/skills/supabase-postgres-best-practices/CHANGELOG.md": {
       "filePath": ".agents/skills/supabase-postgres-best-practices/CHANGELOG.md",
@@ -1915,19 +1915,19 @@
     },
     "client/src/pages/Home.jsx": {
       "filePath": "client/src/pages/Home.jsx",
-      "contentHash": "117d514aa82ebed60636c4e68ed559042b86b3b5c55523b569bf4e5fe1ee3f11",
+      "contentHash": "33527fb76967416e271dd2fc86cf37f00dd5963a33cbb7d3294f5a21aa1da94f",
       "functions": [
         {
           "name": "Home",
           "params": [],
           "exported": false,
-          "lineCount": 271
+          "lineCount": 277
         },
         {
           "name": "ProductPreview",
           "params": [],
           "exported": false,
-          "lineCount": 60
+          "lineCount": 59
         }
       ],
       "classes": [],
@@ -1985,7 +1985,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 343,
+      "totalLines": 347,
       "hasStructuralAnalysis": true
     },
     "client/src/socket.js": {
@@ -2145,12 +2145,12 @@
     },
     "README.md": {
       "filePath": "README.md",
-      "contentHash": "4b1999b94b8deda779c13bd924760a2e0a71c45b7a3fa9b884370a771efdfc17",
+      "contentHash": "d4aa0e3e937802333b4e30947b109930b773730e6a8f6f002b270a5c91be2fbb",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 565,
+      "totalLines": 355,
       "hasStructuralAnalysis": true
     },
     "render.yaml": {

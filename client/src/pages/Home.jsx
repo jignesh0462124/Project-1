@@ -91,43 +91,47 @@ function Home() {
   return (
     <main className="min-h-screen bg-retro-bg text-retro-text">
       <header className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-5 md:px-10 xl:px-16">
-        <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-retro-cyan text-white">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-retro-cyan text-white shadow-[var(--shadow-pop)]">
             <UsersRound className="h-5 w-5" />
           </div>
-          <span className="text-base font-semibold tracking-tight">Collaborative Platform</span>
+          <span className="truncate text-base font-semibold tracking-tight text-retro-text">Collaborative Platform</span>
         </div>
-        <nav className="hidden items-center gap-7 text-sm font-medium text-[var(--text-dim)] md:flex">
-          <span className="text-retro-text">Rooms</span>
-          <span>Compiler</span>
-          <span>AI Review</span>
-        </nav>
-        <ThemeToggle />
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => document.getElementById('display-name')?.focus()}
+            className="hidden rounded-lg border border-retro-border bg-retro-surface px-4 py-2 text-sm font-semibold text-retro-text transition hover:border-retro-cyan hover:text-retro-cyan sm:inline-flex"
+          >
+            Start coding
+          </button>
+          <ThemeToggle />
+        </div>
       </header>
 
-      <section className="mx-auto grid min-h-[calc(100vh-64px)] w-full max-w-7xl grid-cols-1 items-center gap-10 px-5 pb-12 pt-6 md:px-10 lg:grid-cols-12 lg:gap-8 xl:px-16">
+      <section className="mx-auto grid min-h-[calc(100svh-64px)] w-full max-w-7xl grid-cols-1 items-center gap-8 px-5 pb-8 pt-4 md:px-10 lg:grid-cols-12 lg:gap-10 xl:px-16">
         <div className="lg:col-span-7">
           <div className="max-w-3xl">
-            <h1 className="max-w-3xl text-4xl font-normal leading-[1.08] tracking-[-0.04em] text-retro-text sm:text-6xl lg:text-[72px]">
-              Collaborative coding, reviews, and execution in one room.
+            <h1 className="max-w-3xl text-4xl font-normal leading-[1.06] tracking-[-0.035em] text-retro-text sm:text-5xl lg:text-[64px]">
+              Code together without fighting the editor.
             </h1>
-            <p className="mt-6 max-w-2xl text-base leading-7 text-[var(--text-dim)] sm:text-lg">
-              Create a focused coding session where teammates can edit together, run compiler output, discuss the solution, and ask for AI feedback without leaving the workspace.
+            <p className="mt-5 max-w-2xl text-base leading-7 text-[var(--text-dim)] sm:text-lg">
+              Open a focused room for collaborative coding, compiler runs, chat, DSA practice, and structured AI review. Everyone can type at the same time and stay in sync.
             </p>
           </div>
 
-          <div className="mt-10 grid gap-4 sm:grid-cols-3">
+          <div className="mt-7 grid max-w-2xl gap-3 sm:grid-cols-3">
             {[
-              ['Live room state', 'Cursors, chat, roles, pause and ownership stay visible.'],
-              ['Compiler ready', 'Run JavaScript, Python, Java, C++, Go, Rust and more.'],
-              ['AI analysis', 'Review code with compiler output as context.']
+              ['Yjs sync', 'Real simultaneous editing'],
+              ['Room tokens', 'Safer compiler access'],
+              ['AI tabs', 'Fixes, quality, complexity']
             ].map(([title, copy]) => (
-              <div key={title} className="rounded-xl border border-retro-border bg-retro-surface p-4">
-                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-[var(--accent-dim)] text-retro-cyan">
-                  <Check className="h-4 w-4" />
+              <div key={title} className="rounded-lg border border-retro-border bg-retro-surface px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold text-retro-text">
+                  <Check className="h-4 w-4 text-retro-cyan" />
+                  {title}
                 </div>
-                <h2 className="text-sm font-semibold text-retro-text">{title}</h2>
-                <p className="mt-2 text-sm leading-6 text-[var(--text-dim)]">{copy}</p>
+                <p className="mt-1 text-xs leading-5 text-[var(--text-dim)]">{copy}</p>
               </div>
             ))}
           </div>
@@ -136,21 +140,21 @@ function Home() {
         </div>
 
         <div className="lg:col-span-5 lg:justify-self-end">
-          <div className="w-full max-w-[520px] space-y-4">
+          <div className="w-full max-w-[500px] space-y-3">
             <SupabaseAuthPanel onDisplayNameResolved={handleDisplayNameResolved} />
 
-            <section className="rounded-xl border border-retro-border bg-retro-surface p-5 sm:p-6">
-              <div className="mb-6 flex items-start justify-between gap-4">
+            <section className="rounded-xl border border-retro-border bg-retro-surface p-5 shadow-[var(--shadow-panel)] sm:p-6">
+              <div className="mb-5 flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-2xl font-normal tracking-[-0.02em] text-retro-text">Start a room</h2>
-                  <p className="mt-2 text-sm leading-6 text-[var(--text-dim)]">Create a new session or join an existing room code.</p>
+                  <h2 className="text-2xl font-normal tracking-[-0.02em] text-retro-text">Start a session</h2>
+                  <p className="mt-2 text-sm leading-6 text-[var(--text-dim)]">Create a fresh room or join with an existing code.</p>
                 </div>
-                <div className="hidden h-10 w-10 items-center justify-center rounded-lg bg-[var(--surface-raised)] text-retro-cyan sm:flex">
+                <div className="hidden h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-raised)] text-retro-cyan sm:flex">
                   <Code2 className="h-5 w-5" />
                 </div>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-4">
                 <div>
                   <label className="ui-label mb-2 block" htmlFor="display-name">
                     Display name
@@ -168,62 +172,64 @@ function Home() {
                   />
                 </div>
 
-                <div>
-                  <label className="ui-label mb-2 block" htmlFor="language-picker">
-                    Language
-                  </label>
-                  <div className="relative">
-                    <button
-                      id="language-picker"
-                      type="button"
-                      onClick={() => setIsLangDropdownOpen((isOpen) => !isOpen)}
-                      disabled={isLoading}
-                      className="pixel-input flex items-center justify-between gap-3 text-left"
-                    >
-                      <span className="text-retro-text">{selectedLanguageLabel}</span>
-                      <ChevronDown className={`h-4 w-4 text-[var(--text-dim)] transition-transform ${isLangDropdownOpen ? 'rotate-180' : ''}`} />
-                    </button>
+                <div className="grid gap-4 sm:grid-cols-[1fr_0.95fr]">
+                  <div>
+                    <label className="ui-label mb-2 block" htmlFor="language-picker">
+                      Language
+                    </label>
+                    <div className="relative">
+                      <button
+                        id="language-picker"
+                        type="button"
+                        onClick={() => setIsLangDropdownOpen((isOpen) => !isOpen)}
+                        disabled={isLoading}
+                        className="pixel-input flex items-center justify-between gap-3 text-left"
+                      >
+                        <span className="truncate text-retro-text">{selectedLanguageLabel}</span>
+                        <ChevronDown className={`h-4 w-4 shrink-0 text-[var(--text-dim)] transition-transform ${isLangDropdownOpen ? 'rotate-180' : ''}`} />
+                      </button>
 
-                    {isLangDropdownOpen && (
-                      <div className="absolute left-0 top-full z-50 mt-2 max-h-60 w-full overflow-y-auto rounded-lg border border-retro-border bg-[var(--surface)] shadow-[var(--shadow-pop)]">
-                        {SUPPORTED_LANGUAGES.map((language) => (
-                          <button
-                            key={language.value}
-                            type="button"
-                            onClick={() => {
-                              setSelectedLanguage(language.value)
-                              setIsLangDropdownOpen(false)
-                            }}
-                            className={`flex w-full items-center justify-between px-3 py-3 text-left text-sm transition-colors ${
-                              selectedLanguage === language.value
-                                ? 'bg-[var(--accent-dim)] text-retro-cyan'
-                                : 'text-[var(--text-dim)] hover:bg-[var(--surface-hover)] hover:text-retro-text'
-                            }`}
-                          >
-                            {language.label}
-                            {selectedLanguage === language.value && <Check className="h-4 w-4" />}
-                          </button>
-                        ))}
-                      </div>
-                    )}
+                      {isLangDropdownOpen && (
+                        <div className="absolute left-0 top-full z-50 mt-2 max-h-60 w-full overflow-y-auto rounded-lg border border-retro-border bg-[var(--surface)] shadow-[var(--shadow-pop)]">
+                          {SUPPORTED_LANGUAGES.map((language) => (
+                            <button
+                              key={language.value}
+                              type="button"
+                              onClick={() => {
+                                setSelectedLanguage(language.value)
+                                setIsLangDropdownOpen(false)
+                              }}
+                              className={`flex w-full items-center justify-between px-3 py-3 text-left text-sm transition-colors ${
+                                selectedLanguage === language.value
+                                  ? 'bg-[var(--accent-dim)] text-retro-cyan'
+                                  : 'text-[var(--text-dim)] hover:bg-[var(--surface-hover)] hover:text-retro-text'
+                              }`}
+                            >
+                              {language.label}
+                              {selectedLanguage === language.value && <Check className="h-4 w-4" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
 
-                <div className={`overflow-hidden transition-all duration-200 ${showJoinRoom ? 'max-h-28 opacity-100' : 'max-h-0 opacity-0'}`}>
-                  <label className="ui-label mb-2 block" htmlFor="session-code">
-                    Session code
-                  </label>
-                  <input
-                    id="session-code"
-                    type="text"
-                    value={roomId}
-                    onChange={(event) => setRoomId(event.target.value.toUpperCase())}
-                    onKeyDown={(event) => handleKeyPress(event, 'join')}
-                    placeholder="ABC12345"
-                    maxLength={8}
-                    className="pixel-input font-mono-ui uppercase tracking-[0.12em]"
-                    disabled={isLoading}
-                  />
+                  <div className={`transition-all duration-200 ${showJoinRoom ? 'opacity-100' : 'opacity-60'}`}>
+                    <label className="ui-label mb-2 block" htmlFor="session-code">
+                      Session code
+                    </label>
+                    <input
+                      id="session-code"
+                      type="text"
+                      value={roomId}
+                      onChange={(event) => setRoomId(event.target.value.toUpperCase())}
+                      onKeyDown={(event) => handleKeyPress(event, 'join')}
+                      placeholder="ABC12345"
+                      maxLength={8}
+                      className="pixel-input font-mono-ui uppercase tracking-[0.12em]"
+                      disabled={isLoading || !showJoinRoom}
+                    />
+                  </div>
                 </div>
 
                 <div className="grid gap-3 pt-1 sm:grid-cols-2">
@@ -231,16 +237,16 @@ function Home() {
                     <>
                       <button onClick={handleCreateRoom} disabled={isLoading} className="btn btn-primary w-full">
                         <Plus className="h-4 w-4" />
-                        {isLoading ? 'Creating...' : 'Create Room'}
+                        {isLoading ? 'Creating...' : 'Create room'}
                       </button>
                       <button onClick={() => setShowJoinRoom(true)} disabled={isLoading} className="btn w-full">
-                        Join Room
+                        Join room
                       </button>
                     </>
                   ) : (
                     <>
                       <button onClick={handleJoinRoom} disabled={isLoading} className="btn btn-primary w-full">
-                        Join Room
+                        Join room
                       </button>
                       <button
                         onClick={() => {
@@ -250,13 +256,13 @@ function Home() {
                         disabled={isLoading}
                         className="btn btn-ghost w-full"
                       >
-                        Back to Create
+                        Create instead
                       </button>
                     </>
                   )}
                 </div>
 
-                <p className="text-sm leading-6 text-[var(--text-dim)]">Rooms support up to 4 people with shared editor, chat, output, and AI analysis.</p>
+                <p className="text-sm leading-6 text-[var(--text-dim)]">Rooms support up to 4 people with shared editor, chat, output, and review panels.</p>
 
                 {createdRoomId && (
                   <div className="rounded-lg border border-retro-border bg-[var(--surface-raised)] p-4">
@@ -281,30 +287,30 @@ function Home() {
 function ProductPreview() {
   const codeLines = [
     'function pairReview(solution) {',
-    '  const result = runCompiler(solution)',
-    '  return ai.review(solution, result.output)',
+    '  const output = run(solution)',
+    '  return review(solution, output)',
     '}'
   ]
 
   return (
-    <section className="professional-preview mt-10">
+    <section className="professional-preview mt-7 overflow-hidden">
       <div className="professional-preview__bar flex items-center justify-between px-4 py-3">
         <div className="flex items-center gap-2 text-sm font-medium text-retro-text">
           <Terminal className="h-4 w-4 text-retro-cyan" />
-          Room workspace preview
+          Workspace preview
         </div>
         <div className="flex items-center gap-2 text-xs text-[var(--text-dim)]">
           <span className="h-2 w-2 rounded-full bg-[var(--success)]" />
           Live
         </div>
       </div>
-      <div className="grid gap-4 p-4 lg:grid-cols-[1.25fr_0.75fr]">
+      <div className="grid gap-3 p-3 lg:grid-cols-[1.18fr_0.82fr]">
         <div className="professional-code-pane p-4">
-          <div className="mb-4 flex items-center justify-between text-xs text-[var(--text-dim)]">
+          <div className="mb-3 flex items-center justify-between text-xs text-[var(--text-dim)]">
             <span className="font-mono-ui">solution.js</span>
             <span>4 collaborators</span>
           </div>
-          <div className="space-y-2 font-mono-ui text-[13px] leading-6">
+          <div className="space-y-1.5 font-mono-ui text-[13px] leading-6">
             {codeLines.map((line, index) => (
               <div key={line} className="grid grid-cols-[28px_1fr] gap-3">
                 <span className="text-right text-[var(--muted)]">{index + 1}</span>
@@ -313,24 +319,23 @@ function ProductPreview() {
             ))}
           </div>
         </div>
-        <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
           <div className="rounded-xl border border-retro-border bg-[var(--surface-raised)] p-4">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-retro-text">
               <Play className="h-4 w-4 text-retro-cyan" />
-              Compiler output
+              Output
             </div>
-            <pre className="font-mono-ui text-xs leading-6 text-[var(--text-dim)]">Accepted\nRuntime 42ms\nMemory 38MB</pre>
+            <pre className="font-mono-ui text-xs leading-6 text-[var(--text-dim)]">Accepted\nRuntime 42ms</pre>
           </div>
           <div className="rounded-xl border border-retro-border bg-[var(--surface-raised)] p-4">
             <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-retro-text">
               <Bot className="h-4 w-4 text-retro-accent" />
-              AI review timeline
+              Review
             </div>
             <div className="flex flex-wrap gap-2">
-              <span className="ai-stage-pill ai-stage-pill--thinking">Thinking</span>
-              <span className="ai-stage-pill ai-stage-pill--read">Reading</span>
-              <span className="ai-stage-pill ai-stage-pill--edit">Editing</span>
-              <span className="ai-stage-pill ai-stage-pill--done">Done</span>
+              <span className="ai-stage-pill ai-stage-pill--read">Fixes</span>
+              <span className="ai-stage-pill ai-stage-pill--edit">Quality</span>
+              <span className="ai-stage-pill ai-stage-pill--done">Complexity</span>
             </div>
           </div>
         </div>
