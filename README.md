@@ -2,7 +2,7 @@
 
 Collaborative Platform is a real-time collaborative code editor for small coding sessions, interviews, teaching, pair programming, and hackathon teams. Users create or join a room, edit code together in Monaco Editor, chat in the same workspace, run supported code through JDoodle, and request AI code feedback through OpenRouter.
 
-The application is split into a React/Vite client and a Node.js/Express server. Real-time collaboration is handled with Socket.io. Room data is currently stored in memory on the server, so it is fast to run locally and simple to deploy, but room state is not persisted after a server restart.
+The application is split into a React/Vite client and a Node.js/Express server. Real-time collaboration is handled with Socket.io. Live room state is kept in memory for low-latency editing, with optional Supabase persistence for room metadata, membership records, chat messages, code snapshots, and solved-problem records when Supabase is configured.
 
 ## What The Project Does
 
@@ -15,7 +15,7 @@ The application is split into a React/Vite client and a Node.js/Express server. 
 - Assigns room ownership to the first user.
 - Lets the owner pause, unpause, kick users, and transfer ownership.
 - Includes a small DSA problem set with boilerplate code.
-- Runs code through the JDoodle API for supported languages.
+- Runs code through the JDoodle API for supported languages after a user has joined a room.
 - Sends code and compiler output to OpenRouter for AI analysis.
 - Supports dark and light UI themes.
 
@@ -115,8 +115,15 @@ Browser
   v
 Node/Express server
   |
-  | In-memory room store
+  | In-memory live room store
   | rooms = Map<roomId, roomState>
+  |
+  | Optional Supabase persistence
+  | - room metadata
+  | - members
+  | - chat messages
+  | - code snapshots
+  | - solved problems
   |
   | External APIs
   | - JDoodle for execution
@@ -139,7 +146,7 @@ Each room is stored in memory with this shape conceptually:
 }
 ```
 
-Because this is in-memory, empty rooms are deleted after a short cleanup timeout and all rooms are lost when the server restarts.
+The active collaboration session is in-memory first: cursors, connected sockets, ownership handoff state, and unsaved live state are tied to the running server process. When Supabase is configured, the server also persists room metadata, members, chat messages, snapshots, and solved-problem records. A server restart still clears connected socket presence and any live state that has not been saved to Supabase.
 
 ## Main User Flow
 
@@ -294,12 +301,14 @@ Returns the built-in DSA problem list from `server/problems.js`.
 
 ### `POST /api/execute`
 
-Runs code through JDoodle.
+Runs code through JDoodle. The caller must first join a room over Socket.io and use the `executionToken` returned by `room-joined`.
 
 Request:
 
 ```json
 {
+  "roomId": "ABCD1234",
+  "executionToken": "room-issued-token",
   "code": "console.log('hello')",
   "language": "javascript"
 }
@@ -368,7 +377,7 @@ The default model is controlled by `OPENROUTER_MODEL`.
 
 | Event | Payload | Purpose |
 | --- | --- | --- |
-| `room-joined` | `{ users, code, language, roomId }` | Initial room state for a joining user. |
+| `room-joined` | `{ users, code, language, roomId, currentUserId, executionToken }` | Initial room state and short-lived execution capability for a joining user. |
 | `room-full` | `{ message }` | Room rejected because it has 4 users. |
 | `username-taken` | `{ message }` | Room rejected because the username already exists. |
 | `user-joined` | `{ username, users, color, isHost }` | A new user joined. |
@@ -472,9 +481,9 @@ OPENROUTER_APP_TITLE=Collaborative Platform
 
 ## Known Limitations
 
-- Rooms are stored in memory, not a database.
-- Room state is lost when the server restarts.
-- There is no user authentication yet.
+- Live collaboration state is in-memory first; connected socket presence is lost when the server restarts.
+- Supabase persistence is optional and covers room metadata, members, chat, snapshots, and solved-problem records, not every live cursor/presence detail.
+- Code execution requires a short-lived room execution token issued after joining a room.
 - Code execution depends on JDoodle limits and credentials.
 - AI analysis depends on OpenRouter key, credits, rate limits, and model availability.
 - Problem submission is currently a workflow signal, not a full automated judge against test cases.

@@ -1,26 +1,35 @@
 const { createClient } = require('@supabase/supabase-js');
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKeyEntries = [
-  ['SUPABASE_SERVICE_ROLE_KEY', process.env.SUPABASE_SERVICE_ROLE_KEY],
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseAuthKeyEntries = [
+  ['SUPABASE_SERVICE_ROLE_KEY', supabaseServiceRoleKey],
   ['SUPABASE_PUBLISHABLE_KEY', process.env.SUPABASE_PUBLISHABLE_KEY],
   ['SUPABASE_ANON_KEY', process.env.SUPABASE_ANON_KEY],
   ['VITE_SUPABASE_PUBLISHABLE_KEY', process.env.VITE_SUPABASE_PUBLISHABLE_KEY],
   ['VITE_SUPABASE_ANON_KEY', process.env.VITE_SUPABASE_ANON_KEY],
 ];
-const [supabaseAuthKeySource, supabaseAuthKey] = supabaseKeyEntries.find(([, value]) => Boolean(value)) || [];
+const [supabaseAuthKeySource, supabaseAuthKey] = supabaseAuthKeyEntries.find(([, value]) => Boolean(value)) || [];
 
 const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAuthKey);
+const isSupabaseAdminConfigured = Boolean(supabaseUrl && supabaseServiceRoleKey);
 
 let supabase = null;
+let supabaseAdmin = null;
+
+const clientOptions = {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+};
 
 if (isSupabaseConfigured) {
-  supabase = createClient(supabaseUrl, supabaseAuthKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false
-    }
-  });
+  supabase = createClient(supabaseUrl, supabaseAuthKey, clientOptions);
+}
+
+if (isSupabaseAdminConfigured) {
+  supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, clientOptions);
 }
 
 function getSupabaseConfigStatus() {
@@ -28,6 +37,8 @@ function getSupabaseConfigStatus() {
     urlConfigured: Boolean(supabaseUrl),
     authKeyConfigured: Boolean(supabaseAuthKey),
     authKeySource: supabaseAuthKeySource || null,
+    serviceRoleKeyConfigured: Boolean(supabaseServiceRoleKey),
+    persistenceConfigured: isSupabaseAdminConfigured,
   };
 }
 
@@ -89,7 +100,9 @@ async function getUserFromAccessToken(token) {
 
 module.exports = {
   supabase,
+  supabaseAdmin,
   isSupabaseConfigured,
+  isSupabaseAdminConfigured,
   getSupabaseConfigStatus,
   validateAccessToken,
   getUserFromAccessToken

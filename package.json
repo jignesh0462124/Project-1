@@ -13,7 +13,8 @@
     "install:all": "npm install && cd server && npm install && cd ../client && npm install",
     "build": "cd client && npm run build",
     "setup": "npm run install:all && npm run setup:env",
-    "setup:env": "cd server && cp .env.example .env && cd ../client && cp .env.example .env"
+    "setup:env": "cd server && cp .env.example .env && cd ../client && cp .env.example .env",
+    "server:test": "cd server && npm test"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

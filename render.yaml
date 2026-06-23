@@ -33,6 +33,8 @@ services:
         value: deepseek/deepseek-v4-flash
       - key: OPENROUTER_FALLBACK_MODELS
         value: ""
+      - key: OPENROUTER_HTTP_REFERER
+        value: https://collaborative-platform-client.onrender.com
       - key: OPENROUTER_APP_TITLE
         value: Collaborative Platform
       - key: ANALYSIS_FALLBACK_ON_ERROR
@@ -58,13 +60,13 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=4096
       # Point to the backend Render URL — update after first deploy
       - key: VITE_SOCKET_URL
-        value: https://collaborative-platform-server.onrender.com
+        value: https://collaborative-platform-server-f2va.onrender.com
       - key: VITE_API_URL
-        value: https://collaborative-platform-server.onrender.com
-      - key: OPENROUTER_HTTP_REFERER
-        value: https://collaborative-platform-client.onrender.com
+        value: https://collaborative-platform-server-f2va.onrender.com
       # ── Supabase browser keys: fill in the Render dashboard ───────────────
       - key: VITE_SUPABASE_URL
         sync: false

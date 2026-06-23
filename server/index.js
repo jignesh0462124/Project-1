@@ -4,38 +4,34 @@ const http = require('http');
 const socketIo = require('socket.io');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
-const axios = require('axios');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { DSA_PROBLEMS } = require('./problems');
 const { getUserFromAccessToken } = require('./config/supabase');
 const roomService = require('./services/roomService');
 const { requireAuth } = require('./middleware/auth');
+const {
+  normalizeRoomId,
+  normalizeUsername,
+  normalizeLanguage,
+  isValidCodePayload,
+  normalizeChatMessage,
+  isValidCursorPosition,
+  isValidSelectionRange,
+  normalizeSelection,
+} = require('./validators');
+const { createExecutionToken } = require('./executionToken');
+const {
+  attachCollabDocument,
+  getDocumentStatePayload,
+  applyDocumentUpdate,
+  encodeDocumentUpdate,
+  replaceDocumentText,
+} = require('./collabDocument');
+const { executeCode } = require('./providers/jdoodle');
+const { analyzeCode, handleOpenRouterError } = require('./providers/openrouter');
+const { registerRoutes } = require('./routes');
 
-// JDoodle API language mapping (free: 200 credits/day, email signup only)
-const JDOODLE_LANGUAGES = {
-  javascript: { language: 'nodejs', versionIndex: '4' },
-  typescript: { language: 'typescript', versionIndex: '0' },
-  python:     { language: 'python3', versionIndex: '4' },
-  java:       { language: 'java', versionIndex: '4' },
-  cpp:        { language: 'cpp17', versionIndex: '1' },
-  go:         { language: 'go', versionIndex: '4' },
-  rust:       { language: 'rust', versionIndex: '4' },
-};
-
-const JDOODLE_API_URL = 'https://api.jdoodle.com/v1/execute';
-const SUPPORTED_ROOM_LANGUAGES = new Set([...Object.keys(JDOODLE_LANGUAGES), 'html']);
-const MAX_CODE_LENGTH = 50000;
-const MAX_CHAT_MESSAGE_LENGTH = 200;
-const MAX_USERNAME_LENGTH = 20;
-const MAX_COMPILER_OUTPUT_LENGTH = 2000;
-const DANGEROUS_CODE_PATTERNS = [
-  /while\s*\(\s*true\s*\)/i,
-  /for\s*\(\s*;\s*;\s*\)/i,
-  /\bThread\.sleep\s*\(\s*\d{5,}\s*\)/,
-  /\bsleep\s*\(\s*\d{2,}\s*\)/i,
-  /\bsetInterval\s*\([^,]+,\s*0\s*\)/i
-];
 
 const app = express();
 const server = http.createServer(app);
@@ -149,79 +145,6 @@ function generateRoomId() {
   return uuidv4().substring(0, 8).toUpperCase();
 }
 
-function normalizeRoomId(roomId) {
-  const normalized = String(roomId || '').trim().toUpperCase();
-  return /^[A-Z0-9]{8}$/.test(normalized) ? normalized : null;
-}
-
-function normalizeUsername(username) {
-  const normalized = String(username || '').trim();
-  if (!normalized || normalized.length > MAX_USERNAME_LENGTH) return null;
-  return normalized;
-}
-
-function normalizeLanguage(language) {
-  const normalized = String(language || 'javascript').trim().toLowerCase();
-  return SUPPORTED_ROOM_LANGUAGES.has(normalized) ? normalized : 'javascript';
-}
-
-function isValidCodePayload(code) {
-  return typeof code === 'string' && code.length <= MAX_CODE_LENGTH;
-}
-
-function isSafeExecutableCode(code) {
-  return typeof code === 'string' && !DANGEROUS_CODE_PATTERNS.some((pattern) => pattern.test(code));
-}
-
-function normalizeCompilerOutput(compilerOutput) {
-  return typeof compilerOutput === 'string'
-    ? compilerOutput.slice(0, MAX_COMPILER_OUTPUT_LENGTH)
-    : null;
-}
-
-function normalizeChatMessage(message) {
-  const normalized = String(message || '').trim();
-  if (!normalized || normalized.length > MAX_CHAT_MESSAGE_LENGTH) return null;
-  return normalized;
-}
-
-function isValidCursorPosition(position) {
-  return Number.isInteger(position?.lineNumber)
-    && Number.isInteger(position?.column)
-    && position.lineNumber > 0
-    && position.column > 0
-    && position.lineNumber < 1000000
-    && position.column < 100000;
-}
-
-function isValidSelectionRange(selection) {
-  if (!selection) return true;
-
-  return Number.isInteger(selection.startLineNumber)
-    && Number.isInteger(selection.startColumn)
-    && Number.isInteger(selection.endLineNumber)
-    && Number.isInteger(selection.endColumn)
-    && selection.startLineNumber > 0
-    && selection.startColumn > 0
-    && selection.endLineNumber > 0
-    && selection.endColumn > 0
-    && selection.startLineNumber < 1000000
-    && selection.endLineNumber < 1000000
-    && selection.startColumn < 100000
-    && selection.endColumn < 100000;
-}
-
-function normalizeSelection(selection) {
-  if (!selection || !isValidSelectionRange(selection)) return null;
-
-  return {
-    startLineNumber: selection.startLineNumber,
-    startColumn: selection.startColumn,
-    endLineNumber: selection.endLineNumber,
-    endColumn: selection.endColumn
-  };
-}
-
 function getUserPresence(user) {
   return {
     userId: user.id,
@@ -247,59 +170,20 @@ function updateUserPresence(user, position, selection) {
   return getUserPresence(user);
 }
 
-function getProviderErrorDetails(error) {
-  if (!error) return 'Unknown provider error.';
-
-  const responseDetails = error.response?.data?.error || error.response?.data;
-  if (responseDetails) {
-    return typeof responseDetails === 'string'
-      ? responseDetails
-      : JSON.stringify(responseDetails);
-  }
-
-  if (error.code) return `${error.code}${error.message ? `: ${error.message}` : ''}`;
-  if (error.message) return error.message;
-  if (error.cause?.message) return error.cause.message;
-
-  return 'The external provider could not be reached. Check the backend terminal, network access, and provider credentials.';
+function scheduleRoomCodePersist(roomId, room) {
+  if (room.codePersistTimeout) clearTimeout(room.codePersistTimeout);
+  room.codePersistTimeout = setTimeout(() => {
+    roomService.updateRoomCode(roomId, room.code, room.language);
+    room.codePersistTimeout = null;
+  }, 500);
 }
 
-
-function getSafeProviderMessage(data, fallback) {
-  if (!data) return fallback;
-  if (typeof data === 'string') return data.slice(0, 500);
-  if (typeof data.error === 'string') return data.error;
-  if (typeof data.message === 'string') return data.message;
-  if (typeof data.error?.message === 'string') return data.error.message;
-  return fallback;
-}
-
-function getJdoodleCredentialStatus() {
-  const clientId = process.env.JDOODLE_CLIENT_ID || '';
-  const clientSecret = process.env.JDOODLE_CLIENT_SECRET || '';
-
-  return {
-    clientIdExists: Boolean(clientId),
-    clientIdLength: clientId.length,
-    clientSecretExists: Boolean(clientSecret),
-    clientSecretLength: clientSecret.length,
-  };
-}
-
-function logJdoodleCredentialStatus() {
-  console.info('[jdoodle] credential status:', getJdoodleCredentialStatus());
-}
-
-function createProviderError({ message, provider, status, details }) {
-  return {
-    success: false,
-    error: {
-      message,
-      provider,
-      status,
-      ...(details ? { details } : {}),
-    },
-  };
+function createRoomExecutionToken(roomId, socket) {
+  return createExecutionToken({
+    roomId,
+    socketId: socket.id,
+    userId: socket.userId || null,
+  });
 }
 
 io.on('connection', (socket) => {
@@ -346,18 +230,20 @@ io.on('connection', (socket) => {
     if (!rooms.has(roomId)) {
       const persistedRoom = await roomService.getRoom(roomId);
       const initialLanguage = language || 'javascript';
-      rooms.set(roomId, {
+            const initialCode = persistedRoom.data?.code || DEFAULT_ROOM_CODE;
+      const roomState = attachCollabDocument({
         users: [],
-        code: persistedRoom.data?.code || DEFAULT_ROOM_CODE,
+        code: initialCode,
         language: persistedRoom.data?.language || initialLanguage,
         currentProblem: null,
         solvedProblems: new Set(),
         problemBoilerplates: {}
-      });
+      }, initialCode);
+      rooms.set(roomId, roomState);
       console.log(`🏠 Created new room: ${roomId} with language: ${initialLanguage}`);
     }
 
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const existingSocketUser = room.users.find(u => u.id === socket.id);
     if (existingSocketUser) {
@@ -371,7 +257,9 @@ io.on('connection', (socket) => {
         code: room.code,
         language: room.language,
         roomId,
-        currentUserId: socket.id
+        currentUserId: socket.id,
+        executionToken: createRoomExecutionToken(roomId, socket),
+        documentState: getDocumentStatePayload(room)
       });
       return;
     }
@@ -444,33 +332,33 @@ io.on('connection', (socket) => {
       code: room.code,
       language: room.language,
       roomId,
-      currentUserId: socket.id
+      currentUserId: socket.id,
+      executionToken: createRoomExecutionToken(roomId, socket),
+      documentState: getDocumentStatePayload(room)
     });
-
     // Notify other users in the room
     socket.to(roomId).emit('user-joined', {
       username,
       user: { ...newUser },
       users: getRoomUsers(room),
-      presence: getRoomPresence(room),
       color: userColor,
       isHost
     });
 
-    console.log(`✅ ${username} joined room ${roomId} (${room.users.length}/4 users)`);
+    console.log(`${username} joined room ${roomId} (${room.users.length}/4 users)`);
   });
 
   // Handle code changes
-  socket.on('code-change', ({ roomId, code, position, selection }) => {
+  socket.on('code-change', ({ roomId, code }) => {
     roomId = normalizeRoomId(roomId);
-    if (!roomId || !isValidCodePayload(code) || (position && !isValidCursorPosition(position)) || !isValidSelectionRange(selection)) {
+    if (!roomId || !isValidCodePayload(code)) {
       socket.emit('action-blocked', { message: 'Invalid code update.' });
       return;
     }
 
     if (!rooms.has(roomId)) return;
 
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     // Block code changes from paused users
     const sender = room.users.find(u => u.id === socket.id);
@@ -479,24 +367,45 @@ io.on('connection', (socket) => {
       return;
     }
 
-    room.code = code;
-    const presence = position ? updateUserPresence(sender, position, selection) : null;
-    roomService.updateRoomCode(roomId, code, room.language);
+    const documentUpdate = replaceDocumentText(room, code);
+    roomService.updateRoomCode(roomId, room.code, room.language);
 
-    // Broadcast to all other users in the room (not the sender)
+    // Broadcast code only. Presence is synchronized through cursor-move.
     socket.to(roomId).emit('code-updated', {
-      code,
+      code: room.code,
+      documentUpdate,
       userId: sender?.id || socket.id,
       username: sender?.username || socket.username,
-      color: sender?.color || 'var(--accent-2)',
-      cursor: sender?.cursor || null,
-      selection: sender?.selection || null,
-      presence
+      color: sender?.color || 'var(--accent-2)'
     });
-    if (presence) {
-      socket.to(roomId).emit('presence-updated', presence);
+    console.log(`ðŸ“ Code updated in room ${roomId} by ${socket.username}`);
+  });
+
+  // Handle collaborative document updates
+  socket.on('document-update', ({ roomId, update }) => {
+    roomId = normalizeRoomId(roomId);
+    if (!roomId || !rooms.has(roomId)) return;
+
+    const room = attachCollabDocument(rooms.get(roomId));
+    const sender = room.users.find(u => u.id === socket.id);
+    if (!sender) return;
+
+    if (sender.isPaused) {
+      socket.emit('action-blocked', { message: 'You are paused by the host.' });
+      return;
     }
-    console.log(`📝 Code updated in room ${roomId} by ${socket.username}`);
+
+    try {
+      const appliedUpdate = applyDocumentUpdate(room, update);
+      scheduleRoomCodePersist(roomId, room);
+      socket.to(roomId).emit('document-update', {
+        update: encodeDocumentUpdate(appliedUpdate),
+        userId: sender.id,
+        username: sender.username
+      });
+    } catch {
+      socket.emit('action-blocked', { message: 'Invalid document update.' });
+    }
   });
 
   // Handle language changes
@@ -510,44 +419,33 @@ io.on('connection', (socket) => {
 
     if (!rooms.has(roomId)) return;
 
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
     room.language = language;
-    if (code !== undefined) {
-      room.code = code;
-    }
+    const documentUpdate = code !== undefined ? replaceDocumentText(room, code) : null;
     roomService.updateRoomLanguage(roomId, room.language, room.code);
 
     // Broadcast to all users in the room (including sender for consistency)
     io.to(roomId).emit('language-updated', {
       language,
-      code: code !== undefined ? code : room.code
+      code: room.code,
+      documentUpdate
     });
     console.log(`🔧 Language changed to ${language} in room ${roomId} by ${socket.username}`);
   });
 
   // Handle cursor movements
-  socket.on('cursor-move', ({ roomId, username, position, selection }) => {
+  socket.on('cursor-move', ({ roomId, position, selection }) => {
     roomId = normalizeRoomId(roomId);
-    username = normalizeUsername(username);
-    if (!roomId || !username || !isValidCursorPosition(position) || !isValidSelectionRange(selection)) return;
+    if (!roomId || !isValidCursorPosition(position) || !isValidSelectionRange(selection)) return;
 
     if (!rooms.has(roomId)) return;
 
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
     const user = room.users.find(u => u.id === socket.id);
+    if (!user) return;
 
-    if (user) {
-      const presence = updateUserPresence(user, position, selection);
-      // Broadcast cursor position to other users only
-      socket.to(roomId).emit('cursor-updated', {
-        userId: user.id,
-        username: user.username,
-        position,
-        selection: user.selection,
-        color: user.color
-      });
-      socket.to(roomId).emit('presence-updated', presence);
-    }
+    const presence = updateUserPresence(user, position, selection);
+    if (presence) socket.to(roomId).emit('cursor-updated', presence);
   });
 
   // Handle chat messages
@@ -589,7 +487,7 @@ io.on('connection', (socket) => {
     if (!roomId || !targetUsername) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     // Only the host can pause users
     const host = room.users.find(u => u.id === socket.id);
@@ -611,7 +509,7 @@ io.on('connection', (socket) => {
     if (!roomId || !targetUsername) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const host = room.users.find(u => u.id === socket.id);
     if (!host || !host.isHost) return;
@@ -632,7 +530,7 @@ io.on('connection', (socket) => {
     if (!roomId || !targetUsername) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const owner = room.users.find(u => u.id === socket.id);
     if (!owner || owner.role !== 'owner') return;
@@ -652,7 +550,7 @@ io.on('connection', (socket) => {
     if (!roomId || !targetUsername) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const currentOwner = room.users.find(u => u.id === socket.id);
     if (!currentOwner || currentOwner.role !== 'owner') return;
@@ -675,10 +573,8 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('ownership-transferred', {
       newOwner: targetUsername,
       previousOwner: currentOwner.username,
-      users: getRoomUsers(room),
-      presence: getRoomPresence(room)
+      users: getRoomUsers(room)
     });
-    console.log(`👑 Ownership transferred from ${currentOwner.username} to ${targetUsername} in room ${roomId}`);
   });
 
   // Problem-related handlers
@@ -691,7 +587,7 @@ io.on('connection', (socket) => {
     if (!roomId || !Number.isInteger(problemId)) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const user = room.users.find(u => u.id === socket.id);
     if (!user || user.role !== 'owner') return;
@@ -701,13 +597,14 @@ io.on('connection', (socket) => {
 
     room.currentProblem = problem;
     const boilerplate = problem.boilerplate[room.language] || problem.boilerplate.javascript;
-    room.code = boilerplate;
-    room.problemBoilerplates[problem.id] = boilerplate;
-    roomService.setCurrentProblem(roomId, problem.id, boilerplate, room.language);
+    const documentUpdate = replaceDocumentText(room, boilerplate);
+    room.problemBoilerplates[problem.id] = room.code;
+    roomService.setCurrentProblem(roomId, problem.id, room.code, room.language);
 
     io.to(roomId).emit('problem-selected', {
       problem,
-      code: boilerplate,
+      code: room.code,
+      documentUpdate,
       solvedBy: Array.from(room.solvedProblems)
     });
     console.log(`📋 Problem "${problem.title}" selected in room ${roomId} by ${user.username}`);
@@ -718,7 +615,7 @@ io.on('connection', (socket) => {
     if (!roomId) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const user = room.users.find(u => u.id === socket.id);
     if (!user || user.role !== 'owner') return;
@@ -729,13 +626,14 @@ io.on('connection', (socket) => {
 
     room.currentProblem = randomProblem;
     const boilerplate = randomProblem.boilerplate[room.language] || randomProblem.boilerplate.javascript;
-    room.code = boilerplate;
-    room.problemBoilerplates[randomProblem.id] = boilerplate;
-    roomService.setCurrentProblem(roomId, randomProblem.id, boilerplate, room.language);
+    const documentUpdate = replaceDocumentText(room, boilerplate);
+    room.problemBoilerplates[randomProblem.id] = room.code;
+    roomService.setCurrentProblem(roomId, randomProblem.id, room.code, room.language);
 
     io.to(roomId).emit('problem-selected', {
       problem: randomProblem,
-      code: boilerplate,
+      code: room.code,
+      documentUpdate,
       solvedBy: Array.from(room.solvedProblems)
     });
     console.log(`🎲 Random problem "${randomProblem.title}" selected in room ${roomId} by ${user.username}`);
@@ -750,7 +648,7 @@ io.on('connection', (socket) => {
     }
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     if (!room.currentProblem) {
       socket.emit('submission-result', { success: false, message: 'No problem selected!' });
@@ -774,7 +672,7 @@ io.on('connection', (socket) => {
     if (!roomId || !Number.isInteger(problemId)) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const user = room.users.find(u => u.id === socket.id);
     if (!user || user.role !== 'owner') return;
@@ -805,17 +703,18 @@ io.on('connection', (socket) => {
     if (!roomId) return;
 
     if (!rooms.has(roomId)) return;
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
 
     const user = room.users.find(u => u.id === socket.id);
     if (!user || user.role !== 'owner') return;
 
     if (room.currentProblem) {
       const boilerplate = room.currentProblem.boilerplate[room.language] || room.currentProblem.boilerplate.javascript;
-      room.code = boilerplate;
-      roomService.setCurrentProblem(roomId, room.currentProblem.id, boilerplate, room.language);
+      const documentUpdate = replaceDocumentText(room, boilerplate);
+      roomService.setCurrentProblem(roomId, room.currentProblem.id, room.code, room.language);
       io.to(roomId).emit('problem-reset', {
-        code: boilerplate,
+        code: room.code,
+        documentUpdate,
         problem: room.currentProblem
       });
       console.log(`🔄 Problem "${room.currentProblem.title}" reset by ${user.username}`);
@@ -843,7 +742,7 @@ io.on('connection', (socket) => {
   function handleUserLeave(socket, roomId, username, isKicked = false, kickedSocketId = null) {
     if (!rooms.has(roomId)) return;
 
-    const room = rooms.get(roomId);
+    const room = attachCollabDocument(rooms.get(roomId));
     const targetSocketId = isKicked && kickedSocketId ? kickedSocketId : socket.id;
     const userIndex = room.users.findIndex(u => u.id === targetSocketId);
 
@@ -879,6 +778,11 @@ io.on('connection', (socket) => {
         clearTimeout(room.cleanupTimeout);
         room.cleanupTimeout = null;
       }
+      if (room.codePersistTimeout) {
+        clearTimeout(room.codePersistTimeout);
+        roomService.updateRoomCode(roomId, room.code, room.language);
+        room.codePersistTimeout = null;
+      }
 
       // If room is empty, schedule deletion after timeout (allows quick rejoin)
       if (room.users.length === 0) {
@@ -908,13 +812,17 @@ io.on('connection', (socket) => {
           });
           io.to(roomId).emit('new-owner', {
             newOwner: room.users[0].username,
-            users: getRoomUsers(room),
-            presence: getRoomPresence(room)
+            users: getRoomUsers(room)
           });
-          console.log(`👑 ${room.users[0].username} is now the owner of room ${roomId}`);
+          console.log(`${room.users[0].username} is now the owner of room ${roomId}`);
         }
 
         // Notify remaining users
+        io.to(roomId).emit('presence-removed', {
+          userId: leavingUser.id,
+          username: leavingUser.username
+        });
+
         io.to(roomId).emit('user-left', {
           username: leavingUser.username,
           userId: leavingUser.id,
@@ -928,440 +836,18 @@ io.on('connection', (socket) => {
   }
 });
 
-// API endpoint to create a new room (rate-limited)
-app.get('/api/create-room', createRoomLimiter, (req, res) => {
-  const roomId = generateRoomId();
-  res.json({ roomId });
+registerRoutes(app, {
+  rooms,
+  roomService,
+  requireAuth,
+  executeLimiter,
+  analyzeLimiter,
+  createRoomLimiter,
+  generateRoomId,
+  executeCode,
+  analyzeCode,
+  handleOpenRouterError,
 });
-
-// Public health check — minimal info only
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok' });
-});
-
-// Detailed health check — requires auth
-app.get('/api/health/details', requireAuth, (req, res) => {
-  res.json({
-    status: 'ok',
-    rooms: rooms.size,
-    supabase: {
-      configured: roomService.isSupabaseConfigured,
-      persistence: roomService.isSupabaseConfigured ? 'enabled' : 'disabled'
-    },
-    timestamp: new Date().toISOString()
-  });
-});
-
-// Room info endpoint — requires authentication
-app.get('/api/rooms/:roomId', requireAuth, async (req, res) => {
-  const roomId = normalizeRoomId(req.params.roomId);
-  if (!roomId) return res.status(400).json({ error: 'Invalid room id' });
-
-  const memoryRoom = rooms.get(roomId);
-
-  if (memoryRoom) {
-    // Return non-sensitive summary only
-    return res.json({
-      source: 'memory',
-      room: {
-        id: roomId,
-        userCount: memoryRoom.users.length,
-        language: memoryRoom.language,
-        is_active: true,
-        current_problem_id: memoryRoom.currentProblem?.id || null
-      }
-    });
-  }
-
-  const { data, error } = await roomService.getRoom(roomId);
-  if (error) return res.status(500).json({ error: 'Failed to fetch room' });
-  if (!data) return res.status(404).json({ error: 'Room not found' });
-
-  // Strip sensitive fields before returning Supabase data
-  const { code: _code, owner_socket_id: _sid, ...safeRoom } = data;
-  return res.json({ source: 'supabase', room: safeRoom });
-});
-
-// API endpoint to get problems list (auth required to prevent scraping)
-app.get('/api/problems', requireAuth, (req, res) => {
-  res.json({ problems: DSA_PROBLEMS });
-});
-
-// Code execution endpoint via JDoodle - public room users may compile, rate limited to protect API quota
-app.post('/api/execute', executeLimiter, async (req, res) => {
-  try {
-    const { code, language } = req.body;
-
-    if (!code || !language) {
-      return res.status(400).json({ error: 'code and language are required' });
-    }
-
-    if (!isValidCodePayload(code)) {
-      return res.status(400).json({ error: 'Code exceeds maximum length of 50,000 characters' });
-    }
-
-    if (!isSafeExecutableCode(code)) {
-      return res.status(400).json({ error: 'Code contains patterns that may cause long-running execution.' });
-    }
-
-    const jdoodleLang = JDOODLE_LANGUAGES[language];
-    if (!jdoodleLang) {
-      return res.status(400).json({ error: `Unsupported language: ${language}` });
-    }
-
-    const clientId = process.env.JDOODLE_CLIENT_ID;
-    const clientSecret = process.env.JDOODLE_CLIENT_SECRET;
-    logJdoodleCredentialStatus();
-
-    if (!clientId || !clientSecret) {
-      return res.status(500).json(createProviderError({
-        message: 'JDoodle API is not configured.',
-        provider: 'jdoodle',
-        status: 500,
-        details: 'Set JDOODLE_CLIENT_ID and JDOODLE_CLIENT_SECRET on the server.',
-      }));
-    }
-
-    // Send to JDoodle API
-    const response = await axios.post(
-      JDOODLE_API_URL,
-      {
-        clientId,
-        clientSecret,
-        script: code,
-        language: jdoodleLang.language,
-        versionIndex: jdoodleLang.versionIndex,
-      },
-      {
-        headers: { 'Content-Type': 'application/json' },
-        timeout: 30000,
-        validateStatus: () => true,
-      }
-    );
-
-    if (response.status < 200 || response.status >= 300) {
-      const message = getSafeProviderMessage(response.data, response.status === 401 ? 'Unauthorized' : 'JDoodle API error');
-      console.warn('[jdoodle] non-2xx response:', { status: response.status, message });
-      return res.status(response.status).json(createProviderError({
-        message,
-        provider: 'jdoodle',
-        status: response.status,
-      }));
-    }
-
-    const result = response.data;
-
-    // JDoodle returns { output, statusCode, memory, cpuTime, error }
-    // Map to our standard format
-    const isError = result.statusCode !== 200;
-    const isTimeLimit = result.statusCode === 139 || result.cpuTime > 15;
-    const isMemoryLimit = result.memory && result.memory > 256000;
-
-    let status;
-    if (isTimeLimit) {
-      status = { id: 5, description: 'Time Limit Exceeded (>15s)' };
-    } else if (isMemoryLimit) {
-      status = { id: 8, description: 'Memory Limit Exceeded' };
-    } else if (isError) {
-      status = { id: 11, description: 'Runtime Error' };
-    } else {
-      status = { id: 3, description: 'Accepted' };
-    }
-
-    res.json({
-      stdout: isError || isTimeLimit || isMemoryLimit ? null : (result.output || null),
-      stderr: (isError && !isTimeLimit && !isMemoryLimit) ? (result.output || result.error || null) : null,
-      compile_output: null,
-      status,
-      memory: result.memory,
-      cpuTime: result.cpuTime,
-      error: result.error || (isTimeLimit ? 'Execution time exceeded 15 seconds limit' : null),
-    });
-  } catch (err) {
-    const details = getProviderErrorDetails(err);
-    console.error('❌ Code execution error:', err.message);
-
-    if (err.code === 'ECONNABORTED') {
-      return res.status(408).json({
-        error: 'Request Timeout',
-        details: 'Code execution took too long (>30s). Try optimizing your code.',
-        status: { id: 5, description: 'Time Limit Exceeded' },
-      });
-    }
-
-    if (err.response) {
-      const status = err.response.status;
-      const data = err.response.data;
-
-      const message = getSafeProviderMessage(data, status === 401 ? 'Unauthorized' : 'JDoodle API error');
-      return res.status(status).json(createProviderError({
-        message,
-        provider: 'jdoodle',
-        status,
-        details: typeof details === 'string' ? details : undefined,
-      }));
-    }
-
-    res.status(502).json({
-      error: 'Code execution provider unavailable',
-      details,
-      status: { id: 11, description: 'Execution Provider Error' }
-    });
-  }
-});
-
-function buildAnalysisPrompts(code, language, compilerOutput) {
-  const systemPrompt = `You are an AI programming assistant embedded inside a real-time collaborative coding platform called Collaborative Platform.
-Analyze the provided code and compiler output carefully.
-
-Your responsibilities:
-1. Identify syntax errors, logical errors, runtime problems, or bad coding practices.
-2. Provide a clear explanation of each detected issue.
-3. Suggest a corrected or improved version of the code.
-4. Recommend improvements for readability, structure, performance, or best practices.
-5. If the code has no errors, suggest optimizations or cleaner design.
-
-Keep explanations short and developer-friendly. Assume users may be beginners.
-Format your response in markdown with these sections:
-## Issue Detected
-## Suggested Fix
-## Explanation
-## Improvement Suggestions`;
-
-  const userPrompt = `Language: ${language}
-
-User Code:
-\`\`\`${language}
-${code}
-\`\`\`
-
-Compiler Output:
-${compilerOutput || 'No compiler output available (code not yet executed).'}`;
-
-  return { systemPrompt, userPrompt };
-}
-
-function getOpenRouterModels() {
-  const primaryModel = process.env.OPENROUTER_MODEL || 'deepseek/deepseek-v4-flash';
-  const fallbackModels = (process.env.OPENROUTER_FALLBACK_MODELS || '')
-    .split(',')
-    .map(model => model.trim())
-    .filter(Boolean);
-
-  return [...new Set([primaryModel, ...fallbackModels])];
-}
-
-async function requestOpenRouterAnalysis({ code, language, compilerOutput, model }) {
-  const { systemPrompt, userPrompt } = buildAnalysisPrompts(code, language, compilerOutput);
-
-  const response = await axios.post(
-    'https://openrouter.ai/api/v1/chat/completions',
-    {
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-      temperature: 0.3,
-      max_tokens: 2048,
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': process.env.OPENROUTER_HTTP_REFERER || 'http://localhost:5173',
-        'X-OpenRouter-Title': process.env.OPENROUTER_APP_TITLE || 'Collaborative Platform',
-      },
-      timeout: 30000,
-    }
-  );
-
-  return response.data?.choices?.[0]?.message?.content || 'No analysis generated.';
-}
-
-function createLocalAnalysis({ code, language, compilerOutput, reason }) {
-  const findings = [];
-  const trimmedCode = code.trim();
-
-  if (!trimmedCode) {
-    findings.push('The file is empty, so there is nothing to analyze yet.');
-  }
-
-  if (compilerOutput && /error|exception|traceback|failed|undefined|cannot|syntax/i.test(compilerOutput)) {
-    findings.push('The latest compiler output appears to contain an error. Start by reading the first error line and the line number it references.');
-  }
-
-  if (/\beval\s*\(/.test(code)) {
-    findings.push('Avoid `eval(...)`; it can execute unsafe input and makes debugging harder.');
-  }
-
-  if (language === 'javascript' || language === 'typescript') {
-    if (/\bvar\s+/.test(code)) {
-      findings.push('Use `const` or `let` instead of `var` so variable scope is easier to reason about.');
-    }
-    if (/[^=!]==[^=]|!=[^=]/.test(code)) {
-      findings.push('Prefer strict equality (`===` / `!==`) to avoid implicit type coercion bugs.');
-    }
-  }
-
-  if (/console\.log\s*\(/.test(code)) {
-    findings.push('Remove temporary `console.log` calls or keep them behind a debug flag before sharing final code.');
-  }
-
-  if (code.split('\n').some(line => line.length > 120)) {
-    findings.push('Some lines are longer than 120 characters; wrapping them will make collaboration and review easier.');
-  }
-
-  if (!findings.length) {
-    findings.push('No obvious issue was found by the local fallback analyzer.');
-  }
-
-  const providerReason = reason ? `\n\nProvider note: ${reason}` : '';
-
-  return `## Issue Detected
-${findings.map(item => `- ${item}`).join('\n')}${providerReason}
-
-## Suggested Fix
-- Fix any compiler/runtime error shown in Output first.
-- Keep functions small, name intermediate values clearly, and rerun the code after each change.
-- When the API quota resets, run AI Analysis again for a deeper review.
-
-## Explanation
-The external AI provider is unavailable or out of quota, so this is a local fallback review. It checks common issues and uses compiler output when available, but it is intentionally simpler than the hosted model.
-
-## Improvement Suggestions
-- Add focused test cases for expected input, edge cases, and failure paths.
-- Prefer readable control flow over clever one-liners during collaborative editing.
-- Keep comments for intent, not for restating what the code already says.`;
-}
-
-function shouldUseLocalAnalysisFallback() {
-  return process.env.ANALYSIS_FALLBACK_ON_ERROR !== 'false';
-}
-
-// AI Code Analysis endpoint — auth + rate limited to protect API quota
-app.post('/api/analyze', analyzeLimiter, requireAuth, async (req, res) => {
-  try {
-    const { code, language } = req.body;
-    const compilerOutput = normalizeCompilerOutput(req.body.compilerOutput);
-
-    if (!code || !language) {
-      return res.status(400).json({ error: 'code and language are required' });
-    }
-
-    if (!isValidCodePayload(code)) {
-      return res.status(400).json({ error: 'Code exceeds maximum length of 50,000 characters' });
-    }
-
-    if (!process.env.OPENROUTER_API_KEY) {
-      if (shouldUseLocalAnalysisFallback()) {
-        return res.json({
-          analysis: createLocalAnalysis({
-            code,
-            language,
-            compilerOutput,
-            reason: 'OpenRouter API key is not configured.',
-          }),
-          provider: 'local-fallback',
-        });
-      }
-
-      return res.status(500).json({
-        error: 'OpenRouter API is not configured. Add OPENROUTER_API_KEY to server/.env or enable ANALYSIS_FALLBACK_ON_ERROR.',
-      });
-    }
-
-    const providerErrors = [];
-
-    for (const model of getOpenRouterModels()) {
-      try {
-        const analysisText = await requestOpenRouterAnalysis({ code, language, compilerOutput, model });
-        return res.json({ analysis: analysisText, provider: 'openrouter', model });
-      } catch (err) {
-        const status = err.response?.status;
-        const details = err.response?.data?.error?.message || err.response?.data || getProviderErrorDetails(err);
-        providerErrors.push({ model, status, details });
-
-        if (![402, 408, 429, 500, 502, 503, 504].includes(status)) {
-          throw err;
-        }
-      }
-    }
-
-    if (shouldUseLocalAnalysisFallback()) {
-      const exhaustedModels = providerErrors
-        .map(item => `${item.model}${item.status ? ` (${item.status})` : ''}`)
-        .join(', ');
-
-      return res.json({
-        analysis: createLocalAnalysis({
-          code,
-          language,
-          compilerOutput,
-          reason: `OpenRouter model quota/rate limit was reached or unavailable for: ${exhaustedModels}.`,
-        }),
-        provider: 'local-fallback',
-        providerErrors,
-      });
-    }
-
-    return res.status(429).json({
-      error: 'OpenRouter rate limit reached',
-      details: 'All configured OpenRouter models are rate-limited, out of quota, or unavailable.',
-      providerErrors,
-    });
-  } catch (err) {
-    console.error('\u274c AI analysis error:', err.message);
-    if (err.response) {
-      const status = err.response.status;
-      const details = err.response.data?.error?.message || err.response.data || getProviderErrorDetails(err);
-
-      if (shouldUseLocalAnalysisFallback()) {
-        return res.json({
-          analysis: createLocalAnalysis({
-            code: req.body.code,
-            language: req.body.language,
-            compilerOutput: normalizeCompilerOutput(req.body.compilerOutput),
-            reason: `OpenRouter returned ${status || 'an error'}: ${typeof details === 'string' ? details : JSON.stringify(details)}`,
-          }),
-          provider: 'local-fallback',
-        });
-      }
-
-      if (status === 429) {
-        return res.status(429).json({
-          error: 'OpenRouter rate limit reached',
-          details: 'The selected OpenRouter model is currently rate-limited or out of quota. Try again later, add credits, or switch OPENROUTER_MODEL to another available model.',
-        });
-      }
-
-      if (status === 401 || status === 403) {
-        return res.status(status).json({
-          error: 'OpenRouter authentication failed',
-          details: 'Check OPENROUTER_API_KEY in server/.env and restart the server.',
-        });
-      }
-
-      return res.status(err.response.status).json({
-        error: 'OpenRouter API error',
-        details,
-      });
-    }
-    if (shouldUseLocalAnalysisFallback()) {
-      return res.json({
-        analysis: createLocalAnalysis({
-          code: req.body.code,
-          language: req.body.language,
-          compilerOutput: normalizeCompilerOutput(req.body.compilerOutput),
-          reason: `OpenRouter request failed: ${getProviderErrorDetails(err)}`,
-        }),
-        provider: 'local-fallback',
-      });
-    }
-    res.status(500).json({ error: 'AI analysis failed', details: err.message });
-  }
-});
-
 server.listen(PORT, () => {
   console.log(`🚀 Collaborative Platform server running on port ${PORT}`);
   console.log(`🌐 Socket.io enabled with CORS for localhost:5173`);

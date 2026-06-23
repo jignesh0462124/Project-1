@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import Editor, { loader } from '@monaco-editor/react'
-import * as monaco from 'monaco-editor'
+import * as Y from 'yjs'
+import { MonacoBinding } from 'y-monaco'
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import 'monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution'
+import 'monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution'
+import 'monaco-editor/esm/vs/basic-languages/python/python.contribution'
+import 'monaco-editor/esm/vs/basic-languages/java/java.contribution'
+import 'monaco-editor/esm/vs/basic-languages/cpp/cpp.contribution'
+import 'monaco-editor/esm/vs/basic-languages/go/go.contribution'
+import 'monaco-editor/esm/vs/basic-languages/rust/rust.contribution'
+import 'monaco-editor/esm/vs/language/html/monaco.contribution'
+import 'monaco-editor/esm/vs/language/css/monaco.contribution'
+import 'monaco-editor/esm/vs/language/json/monaco.contribution'
 import editorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
 import jsonWorker from 'monaco-editor/esm/vs/language/json/json.worker?worker'
 import cssWorker from 'monaco-editor/esm/vs/language/css/css.worker?worker'
@@ -44,6 +56,8 @@ import {
 } from 'lucide-react'
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const CURSOR_EMIT_INTERVAL_MS = 75
+const REMOTE_DOCUMENT_ORIGIN = 'remote-document-update'
 globalThis.MonacoEnvironment = {
   getWorker(_workerId, label) {
     if (label === 'json') return new jsonWorker()
@@ -131,6 +145,14 @@ function getEditorPresencePayload(editor) {
   }
 }
 
+function toDocumentUpdate(update) {
+  if (update instanceof Uint8Array) return update
+  if (Array.isArray(update)) return Uint8Array.from(update)
+  if (update instanceof ArrayBuffer) return new Uint8Array(update)
+  if (update?.data && Array.isArray(update.data)) return Uint8Array.from(update.data)
+  return null
+}
+
 function hexToRgba(color, alpha) {
   if (!/^#[0-9a-f]{6}$/i.test(color || '')) return `rgba(111, 240, 189, ${alpha})`
 
@@ -161,6 +183,7 @@ function EditorPage() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false)
   const [executionResult, setExecutionResult] = useState(null)
   const [isRunning, setIsRunning] = useState(false)
+  const [executionToken, setExecutionToken] = useState(null)
   const [isPaused, setIsPaused] = useState(false)
   const [analysisResult, setAnalysisResult] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
@@ -191,10 +214,16 @@ function EditorPage() {
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
   const socketRef = useRef(null)
-  const isCodeSyncingRef = useRef(false)
-  const codeUpdateTimeoutRef = useRef(null)
+  const codeRef = useRef('')
   const cursorUpdateTimeoutRef = useRef(null)
-  const decorationsRef = useRef([])
+  const lastCursorEmitAtRef = useRef(0)
+  const pendingCursorPresenceRef = useRef(null)
+  const presenceDecorationsRef = useRef(new Map())
+  const cursorsRef = useRef({})
+  const ydocRef = useRef(null)
+  const ytextRef = useRef(null)
+  const yBindingRef = useRef(null)
+  const pendingDocumentStateRef = useRef(null)
 
   const currentUser = users.find((user) => user.id === currentUserId) || users.find((user) => user.username === username)
   const isHost = isOwnerUser(currentUser)
@@ -205,96 +234,194 @@ function EditorPage() {
   const lineCount = Math.max(code.split('\n').length, 1)
   const editorLineHeight = density === 'compact' ? 20 : 22
 
-  useEffect(() => {
-    if (!editorRef.current || !monacoRef.current) return
+  const removePresenceDecoration = (presenceKey) => {
+    if (!presenceKey || !editorRef.current) return
+
+    const safeCursorId = String(presenceKey).replace(/[^a-zA-Z0-9_-]/g, '-')
+    const previousDecorations = presenceDecorationsRef.current.get(presenceKey) || []
+    if (previousDecorations.length) editorRef.current.deltaDecorations(previousDecorations, [])
+    presenceDecorationsRef.current.delete(presenceKey)
+    document.getElementById(`style-cursor-${safeCursorId}`)?.remove()
+  }
+
+  const upsertPresenceDecoration = (presenceKey, cursorData, userList = users, ownUserId = currentUserId) => {
+    if (!presenceKey || presenceKey === ownUserId || !editorRef.current || !monacoRef.current) return
+
+    const { position, selection, color, username: cursorUsername } = cursorData || {}
+    if (!position?.lineNumber || !position?.column) {
+      removePresenceDecoration(presenceKey)
+      return
+    }
 
     const editor = editorRef.current
     const monacoInstance = monacoRef.current
-    const newDecorations = []
-    const activeStyleIds = new Set()
-
-    Object.entries(cursors).forEach(([userId, cursorData]) => {
-      if (userId === currentUserId) return
-
-      const { position, selection, color, username: cursorUsername } = cursorData
-      if (!position?.lineNumber || !position?.column) return
-
-      const safeCursorId = String(userId).replace(/[^a-zA-Z0-9_-]/g, '-')
-      const user = users.find((item) => item.id === userId || item.username === cursorUsername)
-      const displayName = cursorUsername || user?.username || 'Collaborator'
-      const cursorLabel = isOwnerUser(user) ? `${displayName} - Owner` : displayName
-      const cursorClassName = `cursor-${safeCursorId}`
-      const selectionClassName = `selection-${safeCursorId}`
-      let styleEl = document.getElementById(`style-${cursorClassName}`)
-      activeStyleIds.add(`style-${cursorClassName}`)
-      const styleContent = `
-        .${cursorClassName} {
-          border-left: 2px solid ${color || 'var(--accent)'} !important;
-          position: relative;
-          z-index: 10;
-        }
-        .${cursorClassName}::before {
-          content: ${JSON.stringify(cursorLabel)};
-          position: absolute;
-          top: -20px;
-          left: -2px;
-          background: ${color || 'var(--accent)'};
-          color: var(--on-accent);
-          font-family: "JetBrains Mono", monospace;
-          font-size: 10px;
-          font-weight: 700;
-          padding: 2px 6px;
-          border-radius: 4px;
-          white-space: nowrap;
-          pointer-events: none;
-          box-shadow: var(--shadow-pop);
-        }
-        .${selectionClassName} {
-          background: ${hexToRgba(color || '#6FF0BD', 0.24)} !important;
-          border-bottom: 1px solid ${hexToRgba(color || '#6FF0BD', 0.72)};
-        }
-      `
-
-      if (!styleEl) {
-        styleEl = document.createElement('style')
-        styleEl.id = `style-${cursorClassName}`
-        styleEl.dataset.remotePresence = 'true'
-        document.head.appendChild(styleEl)
+    const safeCursorId = String(presenceKey).replace(/[^a-zA-Z0-9_-]/g, '-')
+    const user = userList.find((item) => item.id === presenceKey || item.username === cursorUsername)
+    const displayName = cursorUsername || user?.username || 'Collaborator'
+    const cursorLabel = isOwnerUser(user) ? `${displayName} - Owner` : displayName
+    const cursorClassName = `cursor-${safeCursorId}`
+    const selectionClassName = `selection-${safeCursorId}`
+    let styleEl = document.getElementById(`style-${cursorClassName}`)
+    const styleContent = `
+      .${cursorClassName} {
+        border-left: 2px solid ${color || 'var(--accent)'} !important;
+        position: relative;
+        z-index: 10;
       }
-      styleEl.innerHTML = styleContent
+      .${cursorClassName}::before {
+        content: ${JSON.stringify(cursorLabel)};
+        position: absolute;
+        top: -20px;
+        left: -2px;
+        background: ${color || 'var(--accent)'};
+        color: var(--on-accent);
+        font-family: "JetBrains Mono", monospace;
+        font-size: 10px;
+        font-weight: 700;
+        padding: 2px 6px;
+        border-radius: 4px;
+        white-space: nowrap;
+        pointer-events: none;
+        box-shadow: var(--shadow-pop);
+      }
+      .${selectionClassName} {
+        background: ${hexToRgba(color || '#6FF0BD', 0.24)} !important;
+        border-bottom: 1px solid ${hexToRgba(color || '#6FF0BD', 0.72)};
+      }
+    `
 
-      newDecorations.push({
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = `style-${cursorClassName}`
+      styleEl.dataset.remotePresence = 'true'
+      document.head.appendChild(styleEl)
+    }
+    styleEl.innerHTML = styleContent
+
+    const nextDecorations = [
+      {
         range: new monacoInstance.Range(position.lineNumber, position.column, position.lineNumber, position.column),
         options: {
           className: cursorClassName,
           hoverMessage: { value: `${cursorLabel} is editing here` },
           stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
         }
-      })
-
-      if (isRangeSelected(selection)) {
-        newDecorations.push({
-          range: new monacoInstance.Range(
-            selection.startLineNumber,
-            selection.startColumn,
-            selection.endLineNumber,
-            selection.endColumn
-          ),
-          options: {
-            inlineClassName: selectionClassName,
-            hoverMessage: { value: `${cursorLabel}'s selection` },
-            stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
-          }
-        })
       }
+    ]
+
+    if (isRangeSelected(selection)) {
+      nextDecorations.push({
+        range: new monacoInstance.Range(
+          selection.startLineNumber,
+          selection.startColumn,
+          selection.endLineNumber,
+          selection.endColumn
+        ),
+        options: {
+          inlineClassName: selectionClassName,
+          hoverMessage: { value: `${cursorLabel}'s selection` },
+          stickiness: monacoInstance.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges
+        }
+      })
+    }
+
+    const previousDecorations = presenceDecorationsRef.current.get(presenceKey) || []
+    const nextDecorationIds = editor.deltaDecorations(previousDecorations, nextDecorations)
+    presenceDecorationsRef.current.set(presenceKey, nextDecorationIds)
+  }
+
+  const syncPresenceSnapshot = (presenceMap, userList = users, ownUserId = currentUserId) => {
+    const activeKeys = new Set(Object.keys(presenceMap || {}))
+
+    presenceDecorationsRef.current.forEach((_decorations, presenceKey) => {
+      if (!activeKeys.has(presenceKey) || presenceKey === ownUserId) removePresenceDecoration(presenceKey)
     })
 
-    decorationsRef.current = editor.deltaDecorations(decorationsRef.current, newDecorations)
-
-    document.querySelectorAll('style[data-remote-presence="true"]').forEach((styleEl) => {
-      if (!activeStyleIds.has(styleEl.id)) styleEl.remove()
+    Object.entries(presenceMap || {}).forEach(([presenceKey, cursorData]) => {
+      upsertPresenceDecoration(presenceKey, cursorData, userList, ownUserId)
     })
-  }, [cursors, currentUserId, users])
+  }
+
+  useEffect(() => {
+    cursorsRef.current = cursors
+  }, [cursors])
+
+  const bindMonacoToYText = (editor = editorRef.current) => {
+    if (!editor || !ytextRef.current) return
+
+    yBindingRef.current?.destroy()
+    yBindingRef.current = new MonacoBinding(ytextRef.current, editor.getModel(), new Set([editor]), null)
+  }
+
+  const applyRemoteDocumentUpdate = (update) => {
+    const normalizedUpdate = toDocumentUpdate(update)
+    if (!normalizedUpdate) return
+
+    if (!ydocRef.current) {
+      pendingDocumentStateRef.current = normalizedUpdate
+      return
+    }
+
+    Y.applyUpdate(ydocRef.current, normalizedUpdate, REMOTE_DOCUMENT_ORIGIN)
+  }
+
+  const replaceLocalDocument = (nextCode = '') => {
+    if (!ydocRef.current || !ytextRef.current) {
+      codeRef.current = nextCode
+      setCode(nextCode)
+      return
+    }
+
+    ydocRef.current.transact(() => {
+      if (ytextRef.current.length) ytextRef.current.delete(0, ytextRef.current.length)
+      if (nextCode) ytextRef.current.insert(0, nextCode)
+    }, REMOTE_DOCUMENT_ORIGIN)
+  }
+
+  useEffect(() => {
+    const ydoc = new Y.Doc()
+    const ytext = ydoc.getText('code')
+
+    ydocRef.current = ydoc
+    ytextRef.current = ytext
+    codeRef.current = ''
+    setCode('')
+
+    const syncCodeFromYText = () => {
+      const nextCode = ytext.toString()
+      codeRef.current = nextCode
+      setCode(nextCode)
+    }
+
+    const emitLocalDocumentUpdate = (update, origin) => {
+      if (origin === REMOTE_DOCUMENT_ORIGIN) return
+      if (!socketRef.current?.connected) return
+
+      socketRef.current.emit('document-update', {
+        roomId,
+        update: Array.from(update)
+      })
+    }
+
+    ytext.observe(syncCodeFromYText)
+    ydoc.on('update', emitLocalDocumentUpdate)
+    bindMonacoToYText()
+
+    if (pendingDocumentStateRef.current) {
+      Y.applyUpdate(ydoc, pendingDocumentStateRef.current, REMOTE_DOCUMENT_ORIGIN)
+      pendingDocumentStateRef.current = null
+    }
+
+    return () => {
+      yBindingRef.current?.destroy()
+      yBindingRef.current = null
+      ytext.unobserve(syncCodeFromYText)
+      ydoc.off('update', emitLocalDocumentUpdate)
+      ydoc.destroy()
+      ydocRef.current = null
+      ytextRef.current = null
+    }
+  }, [roomId])
 
   useEffect(() => {
     if (!username || !roomId) {
@@ -305,6 +432,7 @@ function EditorPage() {
 
     let socket = null
     let isEffectActive = true
+    const presenceDecorations = presenceDecorationsRef.current
 
     const handleConnect = () => {
       setIsConnected(true)
@@ -313,15 +441,23 @@ function EditorPage() {
 
     const handleDisconnect = () => {
       setIsConnected(false)
+      setExecutionToken(null)
       toast.error('Disconnected from server.')
     }
 
     const handleRoomJoined = (data) => {
-      setUsers(data.users || [])
-      setCurrentUserId(data.currentUserId || socket.id || null)
-      setCursors(createPresenceMap(data.presence || data.users || []))
-      setCode(data.code || '')
+      const nextUsers = data.users || []
+      const ownUserId = data.currentUserId || socket.id || null
+      const nextPresence = createPresenceMap(data.presence || nextUsers)
+      setUsers(nextUsers)
+      setCurrentUserId(ownUserId)
+      cursorsRef.current = nextPresence
+      setCursors(nextPresence)
+      syncPresenceSnapshot(nextPresence, nextUsers, ownUserId)
+      if (data.documentState) applyRemoteDocumentUpdate(data.documentState)
+      else replaceLocalDocument(data.code || '')
       setLanguage(data.language || 'javascript')
+      setExecutionToken(data.executionToken || null)
       setIsJoining(false)
       toast.success(`Joined room ${roomId}.`)
 
@@ -349,8 +485,9 @@ function EditorPage() {
     }
 
     const handleUserJoined = (data) => {
-      setUsers(data.users || [])
-      setCursors(createPresenceMap(data.presence || data.users || []))
+      const nextUsers = data.users || []
+      setUsers(nextUsers)
+      syncPresenceSnapshot(cursorsRef.current, nextUsers)
       toast.success(`${data.username} joined.`)
       setChatMessages((previous) => [
         ...previous,
@@ -367,15 +504,13 @@ function EditorPage() {
       setUsers(data.users || [])
       toast(`${data.username} left the room.`)
       const cursorKey = data.userId || data.username
-      setCursors((previous) => {
-        const next = { ...previous }
-        delete next[cursorKey]
-        delete next[data.username]
-        return next
-      })
-
-      const cursorClassName = `cursor-${String(cursorKey).replace(/[^a-zA-Z0-9_-]/g, '-')}`
-      document.getElementById(`style-${cursorClassName}`)?.remove()
+      const nextPresence = { ...cursorsRef.current }
+      delete nextPresence[cursorKey]
+      if (data.username) delete nextPresence[data.username]
+      cursorsRef.current = nextPresence
+      setCursors(nextPresence)
+      removePresenceDecoration(cursorKey)
+      if (data.username) removePresenceDecoration(data.username)
 
       setChatMessages((previous) => [
         ...previous,
@@ -389,47 +524,14 @@ function EditorPage() {
     }
 
     const handleCodeUpdated = (data) => {
-      if (isCodeSyncingRef.current) return
-      isCodeSyncingRef.current = true
-      setCode(data.code || '')
-      if (data.presence?.userId) {
-        setCursors((previous) => ({
-          ...previous,
-          [data.presence.userId]: {
-            username: data.presence.username,
-            position: data.presence.position,
-            selection: data.presence.selection,
-            color: data.presence.color,
-            lastActiveAt: Date.now()
-          }
-        }))
-      } else if (data.userId && data.username && data.cursor) {
-        setCursors((previous) => ({
-          ...previous,
-          [data.userId]: {
-            username: data.username,
-            position: data.cursor,
-            selection: data.selection,
-            color: data.color,
-            lastActiveAt: Date.now()
-          }
-        }))
-      }
-      setTimeout(() => {
-        isCodeSyncingRef.current = false
-      }, 100)
+      if (data.documentUpdate) applyRemoteDocumentUpdate(data.documentUpdate)
+      else replaceLocalDocument(data.code || '')
     }
 
     const handleLanguageUpdated = (data) => {
-      if (isCodeSyncingRef.current) return
       setLanguage(data.language || 'javascript')
-      if (data.code) {
-        isCodeSyncingRef.current = true
-        setCode(data.code)
-        setTimeout(() => {
-          isCodeSyncingRef.current = false
-        }, 100)
-      }
+      if (data.documentUpdate) applyRemoteDocumentUpdate(data.documentUpdate)
+      else if (data.code !== undefined) replaceLocalDocument(data.code)
       toast(`Language changed to ${data.language}.`)
     }
 
@@ -437,32 +539,33 @@ function EditorPage() {
       const cursorKey = data.userId || data.username
       if (!cursorKey) return
 
-      setCursors((previous) => ({
-        ...previous,
-        [cursorKey]: {
-          username: data.username,
-          position: data.position,
-          selection: data.selection,
-          color: data.color,
-          lastActiveAt: Date.now()
-        }
-      }))
+      const nextPresence = {
+        username: data.username,
+        position: data.position,
+        selection: data.selection,
+        color: data.color,
+        lastActiveAt: Date.now()
+      }
+
+      cursorsRef.current = {
+        ...cursorsRef.current,
+        [cursorKey]: nextPresence
+      }
+      setCursors(cursorsRef.current)
+      upsertPresenceDecoration(cursorKey, nextPresence)
     }
 
-    const handlePresenceUpdated = (data) => {
-      const presenceKey = data?.userId || data?.username
-      if (!presenceKey) return
+    const handlePresenceRemoved = (data) => {
+      const cursorKey = data.userId || data.username
+      if (!cursorKey) return
 
-      setCursors((previous) => ({
-        ...previous,
-        [presenceKey]: {
-          username: data.username,
-          position: data.position,
-          selection: data.selection,
-          color: data.color,
-          lastActiveAt: Date.now()
-        }
-      }))
+      const nextPresence = { ...cursorsRef.current }
+      delete nextPresence[cursorKey]
+      if (data.username) delete nextPresence[data.username]
+      cursorsRef.current = nextPresence
+      setCursors(nextPresence)
+      removePresenceDecoration(cursorKey)
+      if (data.username) removePresenceDecoration(data.username)
     }
 
     const handleChatReceived = (data) => {
@@ -518,8 +621,9 @@ function EditorPage() {
     }
 
     const handleOwnershipTransferred = (data) => {
-      setUsers(data.users || [])
-      if (data.presence) setCursors(createPresenceMap(data.presence))
+      const nextUsers = data.users || []
+      setUsers(nextUsers)
+      syncPresenceSnapshot(cursorsRef.current, nextUsers)
       toast(data.newOwner === username ? 'You are now the room owner.' : `${data.newOwner} is now the room owner.`)
       setChatMessages((previous) => [
         ...previous,
@@ -533,8 +637,9 @@ function EditorPage() {
     }
 
     const handleNewOwner = (data) => {
-      setUsers(data.users || [])
-      if (data.presence) setCursors(createPresenceMap(data.presence))
+      const nextUsers = data.users || []
+      setUsers(nextUsers)
+      syncPresenceSnapshot(cursorsRef.current, nextUsers)
       toast(`${data.newOwner} is now the room owner.`)
       setChatMessages((previous) => [
         ...previous,
@@ -555,13 +660,8 @@ function EditorPage() {
       setCurrentProblem(data.problem)
       setShowProblemPanel(true)
       if (data.solvedBy) setSolvedProblems(data.solvedBy)
-      if (data.code) {
-        isCodeSyncingRef.current = true
-        setCode(data.code)
-        setTimeout(() => {
-          isCodeSyncingRef.current = false
-        }, 100)
-      }
+      if (data.documentUpdate) applyRemoteDocumentUpdate(data.documentUpdate)
+      else if (data.code !== undefined) replaceLocalDocument(data.code)
       toast(`Problem selected: ${data.problem.title}`)
       setChatMessages((previous) => [
         ...previous,
@@ -589,13 +689,8 @@ function EditorPage() {
     }
 
     const handleProblemReset = (data) => {
-      if (data.code) {
-        isCodeSyncingRef.current = true
-        setCode(data.code)
-        setTimeout(() => {
-          isCodeSyncingRef.current = false
-        }, 100)
-      }
+      if (data.documentUpdate) applyRemoteDocumentUpdate(data.documentUpdate)
+      else if (data.code !== undefined) replaceLocalDocument(data.code)
       toast('Problem reset to boilerplate.')
     }
 
@@ -620,8 +715,9 @@ function EditorPage() {
       socket.on('user-left', handleUserLeft)
       socket.on('code-updated', handleCodeUpdated)
       socket.on('language-updated', handleLanguageUpdated)
+      socket.on('document-update', handleDocumentUpdated)
       socket.on('cursor-updated', handleCursorUpdated)
-      socket.on('presence-updated', handlePresenceUpdated)
+      socket.on('presence-removed', handlePresenceRemoved)
       socket.on('chat-received', handleChatReceived)
       socket.on('user-paused', handleUserPaused)
       socket.on('user-unpaused', handleUserUnpaused)
@@ -642,7 +738,6 @@ function EditorPage() {
 
     return () => {
       isEffectActive = false
-      clearTimeout(codeUpdateTimeoutRef.current)
       clearTimeout(cursorUpdateTimeoutRef.current)
 
       if (!socket) return
@@ -658,8 +753,9 @@ function EditorPage() {
       socket.off('user-left', handleUserLeft)
       socket.off('code-updated', handleCodeUpdated)
       socket.off('language-updated', handleLanguageUpdated)
+      socket.off('document-update', handleDocumentUpdated)
       socket.off('cursor-updated', handleCursorUpdated)
-      socket.off('presence-updated', handlePresenceUpdated)
+      socket.off('presence-removed', handlePresenceRemoved)
       socket.off('chat-received', handleChatReceived)
       socket.off('user-paused', handleUserPaused)
       socket.off('user-unpaused', handleUserUnpaused)
@@ -673,8 +769,13 @@ function EditorPage() {
       socket.off('problem-reset', handleProblemReset)
       socket.off('submission-result', handleSubmissionResult)
 
+      presenceDecorations.forEach((_decorations, presenceKey) => removePresenceDecoration(presenceKey))
+      document.querySelectorAll('style[data-remote-presence="true"]').forEach((styleEl) => styleEl.remove())
+
       socketService.disconnect()
     }
+    // Socket subscriptions are intentionally scoped to the room session lifecycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [roomId, username, initialLanguage, navigate])
 
   useEffect(() => {
@@ -694,7 +795,7 @@ function EditorPage() {
   }, [density])
 
   useEffect(() => {
-    if (code && !isCodeSyncingRef.current) {
+    if (code) {
       setIsSaving(true)
       const timer = setTimeout(() => {
         setIsSaving(false)
@@ -704,38 +805,35 @@ function EditorPage() {
     }
   }, [code])
 
-  const handleEditorChange = (value) => {
-    setCode(value || '')
-
-    clearTimeout(codeUpdateTimeoutRef.current)
-    codeUpdateTimeoutRef.current = setTimeout(() => {
-      if (socketRef.current?.connected) {
-        const presence = getEditorPresencePayload(editorRef.current)
-        socketRef.current.emit('code-change', {
-          roomId,
-          code: value || '',
-          position: presence?.position,
-          selection: presence?.selection
-        })
-      }
-    }, 300)
-  }
-
   const handleEditorPresenceChange = () => {
     if (!editorRef.current || !socketRef.current?.connected) return
 
     const presence = getEditorPresencePayload(editorRef.current)
     if (!presence?.position) return
 
-    clearTimeout(cursorUpdateTimeoutRef.current)
-    cursorUpdateTimeoutRef.current = setTimeout(() => {
+    pendingCursorPresenceRef.current = presence
+    const now = Date.now()
+    const elapsed = now - lastCursorEmitAtRef.current
+
+    const emitLatestPresence = () => {
+      const latestPresence = pendingCursorPresenceRef.current
+      if (!latestPresence || !socketRef.current?.connected) return
+
+      pendingCursorPresenceRef.current = null
+      lastCursorEmitAtRef.current = Date.now()
       socketRef.current.emit('cursor-move', {
         roomId,
-        username,
-        position: presence.position,
-        selection: presence.selection
+        position: latestPresence.position,
+        selection: latestPresence.selection
       })
-    }, 150)
+    }
+
+    clearTimeout(cursorUpdateTimeoutRef.current)
+    if (elapsed >= CURSOR_EMIT_INTERVAL_MS) {
+      emitLatestPresence()
+    } else {
+      cursorUpdateTimeoutRef.current = setTimeout(emitLatestPresence, CURSOR_EMIT_INTERVAL_MS - elapsed)
+    }
   }
 
   const handleLanguageChange = (newLanguage) => {
@@ -745,19 +843,25 @@ function EditorPage() {
       || currentProblem?.boilerplate?.javascript
       || getBoilerplate(newLanguage)
 
-    setCode(boilerplate)
-
     if (socketRef.current?.connected) {
       socketRef.current.emit('language-change', { roomId, language: newLanguage, code: boilerplate })
     }
   }
 
   const handleRunCode = async () => {
+    const latestCode = codeRef.current
     if (isRunning || !EXECUTABLE_LANGUAGES.includes(language)) return
 
     setActiveActivityTab('output')
     setIsRunning(true)
     setExecutionResult(null)
+
+    if (!executionToken) {
+      setExecutionResult({ error: 'Execution unavailable', details: 'Rejoin the room to refresh execution access.' })
+      toast.error('Rejoin the room to run code.')
+      setIsRunning(false)
+      return
+    }
 
     try {
       const accessToken = await getSupabaseAccessToken()
@@ -767,18 +871,20 @@ function EditorPage() {
       const response = await fetch(`${API_URL}/api/execute`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ code, language })
+        body: JSON.stringify({ roomId, executionToken, code: latestCode, language })
       })
 
       const data = await response.json()
 
       if (!response.ok) {
         const providerError = data.error && typeof data.error === 'object' ? data.error : null
+        const tokenRejected = typeof data.code === 'string' && data.code.startsWith('EXECUTION_TOKEN_')
+        if (tokenRejected) setExecutionToken(null)
         setExecutionResult({
-          error: providerError?.message || data.error || 'Execution failed',
-          details: providerError?.details || data.details || (providerError?.status ? `${providerError.provider || 'provider'} returned HTTP ${providerError.status}` : null)
+          error: providerError?.message || data.message || data.error || 'Execution failed',
+          details: providerError?.details || data.details || data.code || (providerError?.status ? `${providerError.provider || 'provider'} returned HTTP ${providerError.status}` : null)
         })
-        toast.error('Execution failed.')
+        toast.error(tokenRejected ? 'Rejoin the room to refresh compiler access.' : 'Execution failed.')
       } else {
         setExecutionResult(data)
         if (data.status?.id === 3) toast.success('Code executed successfully.')
@@ -793,7 +899,8 @@ function EditorPage() {
   }
 
   const handleAnalyzeCode = async () => {
-    if (isAnalyzing || !code.trim()) return
+    const latestCode = codeRef.current
+    if (isAnalyzing || !latestCode.trim()) return
 
     setActiveActivityTab('analysis')
     setHasUnreadAnalysis(false)
@@ -807,7 +914,7 @@ function EditorPage() {
 
       const accessToken = await getSupabaseAccessToken()
       if (!accessToken) {
-        setAnalysisResult('Error: Sign up or sign in required for AI analysis.')
+        setAnalysisResult({ error: 'Sign up or sign in required for AI analysis.' })
         toast.error('Sign up or sign in to use AI analysis.')
         return
       }
@@ -818,7 +925,7 @@ function EditorPage() {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ code, language, compilerOutput })
+        body: JSON.stringify({ code: latestCode, language, compilerOutput })
       })
 
       const data = await response.json().catch(() => ({}))
@@ -830,7 +937,7 @@ function EditorPage() {
         setAnalysisResult(`Error: ${message}`)
         toast.error(message)
       } else {
-        setAnalysisResult(data.analysis)
+        setAnalysisResult(data)
         toast.success('Analysis complete.')
       }
     } catch (error) {
@@ -839,6 +946,10 @@ function EditorPage() {
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const handleDocumentUpdated = (data) => {
+    applyRemoteDocumentUpdate(data.update)
   }
 
   const handleSendMessage = (message) => {
@@ -860,33 +971,33 @@ function EditorPage() {
       base: 'vs-dark',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '5c6373', fontStyle: 'italic' },
-        { token: 'keyword', foreground: 'b79cff', fontStyle: 'bold' },
-        { token: 'string', foreground: 'ffb454' },
-        { token: 'number', foreground: '7bb8ff' },
-        { token: 'type', foreground: '6ff0bd' },
-        { token: 'function', foreground: '7bb8ff' },
-        { token: 'variable', foreground: 'edeff3' },
-        { token: 'constant', foreground: 'ffb454' }
+        { token: 'comment', foreground: '766f66', fontStyle: 'italic' },
+        { token: 'keyword', foreground: 'c0a8dd', fontStyle: 'bold' },
+        { token: 'string', foreground: 'dfa88f' },
+        { token: 'number', foreground: '9fbbe0' },
+        { token: 'type', foreground: '9fc9a2' },
+        { token: 'function', foreground: '9fbbe0' },
+        { token: 'variable', foreground: 'f4f1ea' },
+        { token: 'constant', foreground: 'd59b3d' }
       ],
       colors: {
-        'editor.background': '#0b0d12',
-        'editor.foreground': '#edeff3',
-        'editor.lineHighlightBackground': '#13161d',
-        'editorCursor.foreground': '#6ff0bd',
-        'editor.selectionBackground': '#173b30',
-        'editorLineNumber.foreground': '#5c6373',
-        'editorLineNumber.activeForeground': '#6ff0bd',
-        'editor.selectionHighlightBackground': '#2a2347',
-        'editorIndentGuide.background': '#262b36',
-        'editorIndentGuide.activeBackground': '#363d4b',
-        'editorBracketMatch.background': '#173b30',
-        'editorBracketMatch.border': '#6ff0bd',
-        'editorGutter.background': '#0b0d12',
-        'minimap.background': '#0b0d12',
-        'scrollbarSlider.background': '#363d4b80',
-        'scrollbarSlider.hoverBackground': '#5c637380',
-        'scrollbarSlider.activeBackground': '#a7adbb80'
+        'editor.background': '#0f1117',
+        'editor.foreground': '#f4f1ea',
+        'editor.lineHighlightBackground': '#151922',
+        'editorCursor.foreground': '#f54e00',
+        'editor.selectionBackground': '#3a1c0f',
+        'editorLineNumber.foreground': '#766f66',
+        'editorLineNumber.activeForeground': '#f54e00',
+        'editor.selectionHighlightBackground': '#2c2438',
+        'editorIndentGuide.background': '#2a3040',
+        'editorIndentGuide.activeBackground': '#3a4254',
+        'editorBracketMatch.background': '#3a1c0f',
+        'editorBracketMatch.border': '#f54e00',
+        'editorGutter.background': '#0f1117',
+        'minimap.background': '#0f1117',
+        'scrollbarSlider.background': '#3a425480',
+        'scrollbarSlider.hoverBackground': '#766f6680',
+        'scrollbarSlider.activeBackground': '#b5afa580'
       }
     })
 
@@ -894,37 +1005,38 @@ function EditorPage() {
       base: 'vs',
       inherit: true,
       rules: [
-        { token: 'comment', foreground: '8a8f99', fontStyle: 'italic' },
-        { token: 'keyword', foreground: '7a4fe0', fontStyle: 'bold' },
-        { token: 'string', foreground: 'b5740c' },
-        { token: 'number', foreground: '2e7dd1' },
-        { token: 'type', foreground: '0e9e6e' },
-        { token: 'function', foreground: '2e7dd1' },
-        { token: 'variable', foreground: '15171c' },
-        { token: 'constant', foreground: 'b5740c' }
+        { token: 'comment', foreground: '807d72', fontStyle: 'italic' },
+        { token: 'keyword', foreground: '7457b6', fontStyle: 'bold' },
+        { token: 'string', foreground: '9a650e' },
+        { token: 'number', foreground: '406fa9' },
+        { token: 'type', foreground: '1f8a65' },
+        { token: 'function', foreground: '406fa9' },
+        { token: 'variable', foreground: '26251e' },
+        { token: 'constant', foreground: '9a650e' }
       ],
       colors: {
-        'editor.background': '#f6f5f1',
-        'editor.foreground': '#15171c',
+        'editor.background': '#fafaf7',
+        'editor.foreground': '#26251e',
         'editor.lineHighlightBackground': '#ffffff',
-        'editorCursor.foreground': '#0e9e6e',
-        'editor.selectionBackground': '#def5ea',
-        'editorLineNumber.foreground': '#8a8f99',
-        'editorLineNumber.activeForeground': '#0e9e6e',
-        'editor.selectionHighlightBackground': '#ebe3fb',
-        'editorIndentGuide.background': '#e2e0d8',
-        'editorIndentGuide.activeBackground': '#c9c6ba',
-        'editorBracketMatch.background': '#def5ea',
-        'editorBracketMatch.border': '#0e9e6e',
-        'editorGutter.background': '#f6f5f1',
-        'minimap.background': '#f6f5f1',
-        'scrollbarSlider.background': '#c9c6ba80',
-        'scrollbarSlider.hoverBackground': '#8a8f9980',
-        'scrollbarSlider.activeBackground': '#53586380'
+        'editorCursor.foreground': '#f54e00',
+        'editor.selectionBackground': '#fff0e8',
+        'editorLineNumber.foreground': '#807d72',
+        'editorLineNumber.activeForeground': '#f54e00',
+        'editor.selectionHighlightBackground': '#f0eaf8',
+        'editorIndentGuide.background': '#e6e5e0',
+        'editorIndentGuide.activeBackground': '#cfcdc4',
+        'editorBracketMatch.background': '#fff0e8',
+        'editorBracketMatch.border': '#f54e00',
+        'editorGutter.background': '#fafaf7',
+        'minimap.background': '#fafaf7',
+        'scrollbarSlider.background': '#cfcdc480',
+        'scrollbarSlider.hoverBackground': '#807d7280',
+        'scrollbarSlider.activeBackground': '#5a585280'
       }
     })
-
     monaco.editor.setTheme(theme === 'light' ? 'collab-light' : 'collab-dark')
+    bindMonacoToYText(editor)
+
     const syncCursorPosition = () => {
       const position = editor.getPosition()
       if (!position?.lineNumber || !position?.column) return
@@ -1000,7 +1112,7 @@ function EditorPage() {
 
   const handleCopyCode = async () => {
     try {
-      await navigator.clipboard.writeText(code)
+      await navigator.clipboard.writeText(codeRef.current)
       toast.success('Code copied.')
     } catch {
       toast.error('Could not copy code.')
@@ -1009,7 +1121,7 @@ function EditorPage() {
 
   const handleDownloadCode = () => {
     const extension = SUPPORTED_LANGUAGES.find((item) => item.value === language)?.extension || 'txt'
-    const blob = new Blob([code], { type: 'text/plain' })
+    const blob = new Blob([codeRef.current], { type: 'text/plain' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
@@ -1073,7 +1185,7 @@ function EditorPage() {
   }
 
   const handleSubmitSolution = () => {
-    if (currentProblem) socketRef.current?.emit('submit-solution', { roomId, code, language })
+    if (currentProblem) socketRef.current?.emit('submit-solution', { roomId, code: codeRef.current, language })
   }
 
   if (isJoining) {
@@ -1211,8 +1323,7 @@ function EditorPage() {
               <Editor
                 height="100%"
                 language={getCurrentMonacoLanguage()}
-                value={code}
-                onChange={handleEditorChange}
+                defaultValue=""
                 onMount={handleEditorDidMount}
                 theme={theme === 'light' ? 'collab-light' : 'collab-dark'}
                 options={{

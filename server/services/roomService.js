@@ -1,6 +1,12 @@
-const { supabase, isSupabaseConfigured } = require('../config/supabase');
+const { supabaseAdmin: supabase, isSupabaseAdminConfigured } = require('../config/supabase');
 
-function skipped() {
+const skippedWarnings = new Set();
+
+function skipped(action) {
+  if (!skippedWarnings.has(action)) {
+    skippedWarnings.add(action);
+    console.warn(`[supabase] ${action} skipped: SUPABASE_SERVICE_ROLE_KEY is not configured for server-side persistence.`);
+  }
   return { data: null, error: null, skipped: true };
 }
 
@@ -9,7 +15,7 @@ function logError(action, error) {
 }
 
 async function run(action, queryBuilder) {
-  if (!isSupabaseConfigured) return skipped();
+  if (!isSupabaseAdminConfigured) return skipped(action);
 
   try {
     const result = await queryBuilder();
@@ -95,7 +101,7 @@ async function joinRoomMember({ roomId, userId = null, socketId, username, role 
 }
 
 async function leaveRoomMember({ roomId, userId = null, socketId }) {
-  if (!isSupabaseConfigured) return skipped();
+  if (!isSupabaseAdminConfigured) return skipped('leaveRoomMember');
 
   const query = supabase
     .from('room_members')
@@ -119,7 +125,7 @@ async function updateMemberPaused(roomId, username, isPaused) {
 }
 
 async function transferOwnership({ roomId, newOwnerUserId = null, newOwnerSocketId, previousOwnerUserId = null, previousOwnerSocketId }) {
-  if (!isSupabaseConfigured) return skipped();
+  if (!isSupabaseAdminConfigured) return skipped('transferOwnership');
 
   const ownerPayload = newOwnerUserId
     ? { owner_id: newOwnerUserId, owner_socket_id: newOwnerSocketId || null }
@@ -224,5 +230,5 @@ module.exports = {
   saveSnapshot,
   setCurrentProblem,
   markProblemSolved,
-  isSupabaseConfigured
+  isSupabaseConfigured: isSupabaseAdminConfigured
 };
