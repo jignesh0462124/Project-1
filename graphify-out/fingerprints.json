@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "gitCommitHash": "e26e6a127f7f2f4d4addc813d3f3b28a2bc0af69",
-  "generatedAt": "2026-06-23T15:40:20.268Z",
+  "gitCommitHash": "c6c51f36a66edf9be89cbafea1a14f4292cf0197",
+  "generatedAt": "2026-06-23T16:22:23.351Z",
   "files": {
     ".agents/skills/supabase-postgres-best-practices/CHANGELOG.md": {
       "filePath": ".agents/skills/supabase-postgres-best-practices/CHANGELOG.md",
@@ -1266,13 +1266,27 @@
     },
     "client/src/components/SupabaseAuthPanel.jsx": {
       "filePath": "client/src/components/SupabaseAuthPanel.jsx",
-      "contentHash": "4eeaa5bb4681a7325c073a1be9275b157089db79a0b2504c329cbb89a280d285",
+      "contentHash": "3e10c9d4f7de64fda93cd14cb7e85add48d922731eac91b3698ea0f7e59aba75",
       "functions": [
+        {
+          "name": "getEmailRedirectUrl",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "getAuthErrorMessage",
+          "params": [
+            "error"
+          ],
+          "exported": false,
+          "lineCount": 14
+        },
         {
           "name": "SupabaseAuthPanel",
           "params": [],
           "exported": false,
-          "lineCount": 221
+          "lineCount": 287
         }
       ],
       "classes": [],
@@ -1293,6 +1307,7 @@
         {
           "source": "lucide-react",
           "specifiers": [
+            "CheckCircle2",
             "LockKeyhole",
             "LogIn",
             "LogOut",
@@ -1311,7 +1326,7 @@
         }
       ],
       "exports": [],
-      "totalLines": 229,
+      "totalLines": 313,
       "hasStructuralAnalysis": true
     },
     "client/src/components/ThemeContext.jsx": {
@@ -2340,12 +2355,12 @@
     },
     "server/.env": {
       "filePath": "server/.env",
-      "contentHash": "2b8879497a06e615c0267b3121e4b24a194d7633dc4a88f88d14d2bba5d78e91",
+      "contentHash": "6969e1a0cde9875cf912169805bf046875aad4d71162e20a415e43bb469d2c02",
       "functions": [],
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 25,
+      "totalLines": 26,
       "hasStructuralAnalysis": true
     },
     "server/.env.example": {
@@ -2514,7 +2529,7 @@
     },
     "server/index.js": {
       "filePath": "server/index.js",
-      "contentHash": "f467f865dc492ba34fc1a464aed77a7bb90e6066a3697f38ab5215f1533cd2ea",
+      "contentHash": "dfa7768e0f235dc557e78106c7e5e6af2a99025384a7f163b86133c94d3ba012",
       "functions": [
         {
           "name": "getUserColor",
@@ -2586,7 +2601,7 @@
       "classes": [],
       "imports": [],
       "exports": [],
-      "totalLines": 863,
+      "totalLines": 867,
       "hasStructuralAnalysis": true
     },
     "server/middleware/auth.js": {

@@ -1,7 +1,26 @@
 import { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { LockKeyhole, LogIn, LogOut, Mail, ShieldCheck, UserRound } from 'lucide-react'
+import { CheckCircle2, LockKeyhole, LogIn, LogOut, Mail, ShieldCheck, UserRound } from 'lucide-react'
 import { getDisplayNameFromUser, isSupabaseConfigured, supabase } from '../lib/supabase'
+
+function getEmailRedirectUrl() {
+  return typeof window !== 'undefined' ? window.location.origin : undefined
+}
+
+function getAuthErrorMessage(error) {
+  const message = error?.message || ''
+  const status = error?.status || error?.code
+
+  if (status === 500 || /500|unexpected|server/i.test(message)) {
+    return 'Signup email could not be sent. Check Supabase SMTP settings, Site URL, and Redirect URLs.'
+  }
+
+  if (/rate limit|too many/i.test(message)) {
+    return 'Too many signup emails were requested. Please wait a moment and try again.'
+  }
+
+  return message || 'Supabase auth failed.'
+}
 
 function SupabaseAuthPanel({ onDisplayNameResolved }) {
   const [session, setSession] = useState(null)
@@ -9,6 +28,7 @@ function SupabaseAuthPanel({ onDisplayNameResolved }) {
   const [displayName, setDisplayName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [pendingEmail, setPendingEmail] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
@@ -25,6 +45,7 @@ function SupabaseAuthPanel({ onDisplayNameResolved }) {
 
     const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
       setSession(nextSession)
+      if (nextSession?.user) setPendingEmail('')
       const resolvedName = getDisplayNameFromUser(nextSession?.user)
       if (resolvedName) onDisplayNameResolved(resolvedName.slice(0, 20))
     })
@@ -67,6 +88,7 @@ function SupabaseAuthPanel({ onDisplayNameResolved }) {
           email: cleanEmail,
           password,
           options: {
+            emailRedirectTo: getEmailRedirectUrl(),
             data: {
               username: cleanName,
               display_name: cleanName
@@ -74,12 +96,40 @@ function SupabaseAuthPanel({ onDisplayNameResolved }) {
           }
         })
         if (error) throw error
-        if (data.session) toast.success('Account created.')
-        else toast.success('Check your email to confirm the account.')
+
         onDisplayNameResolved(cleanName)
+        setPassword('')
+
+        if (data.session) {
+          toast.success('Account created.')
+        } else {
+          setPendingEmail(cleanEmail)
+          toast.success('Check your email to confirm the account.')
+        }
       }
     } catch (error) {
-      toast.error(error.message || 'Supabase auth failed.')
+      toast.error(getAuthErrorMessage(error))
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleResendConfirmation = async () => {
+    if (!supabase || isSubmitting || !pendingEmail) return
+
+    setIsSubmitting(true)
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: pendingEmail,
+        options: {
+          emailRedirectTo: getEmailRedirectUrl()
+        }
+      })
+      if (error) throw error
+      toast.success('Confirmation email sent again.')
+    } catch (error) {
+      toast.error(getAuthErrorMessage(error))
     } finally {
       setIsSubmitting(false)
     }
@@ -134,6 +184,41 @@ function SupabaseAuthPanel({ onDisplayNameResolved }) {
           <button type="button" onClick={handleSignOut} disabled={isSubmitting} className="btn btn-ghost shrink-0">
             <LogOut className="h-4 w-4" />
             Sign out
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  if (pendingEmail) {
+    return (
+      <section className="rounded-lg border border-retro-border bg-retro-surface p-5 sm:p-6">
+        <div className="flex items-start gap-3">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded bg-[var(--accent-dim)] text-retro-cyan">
+            <CheckCircle2 className="h-5 w-5" />
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-base font-bold tracking-tight text-retro-text">Check your email</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--text-dim)]">
+              We sent a confirmation link to <span className="font-semibold text-retro-text">{pendingEmail}</span>. Open that email and confirm your account. After confirmation, you will return to this landing page.
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-2">
+          <button type="button" onClick={handleResendConfirmation} disabled={isSubmitting} className="btn btn-primary w-full">
+            <Mail className="h-4 w-4" />
+            {isSubmitting ? 'Sending...' : 'Resend email'}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPendingEmail('')
+              setMode('signin')
+            }}
+            className="btn btn-ghost w-full"
+            disabled={isSubmitting}
+          >
+            Back to sign in
           </button>
         </div>
       </section>

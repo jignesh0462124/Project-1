@@ -306,24 +306,28 @@ io.on('connection', (socket) => {
     socket.username = username;
     socket.userId = newUser.userId;
 
+    let roomPersistenceReady = true;
     if (isHost) {
-      roomService.upsertRoom({
+      const roomPersistResult = await roomService.upsertRoom({
         roomId,
         ownerId: newUser.userId,
         ownerSocketId: socket.id,
         language: room.language,
         code: room.code
       });
+      roomPersistenceReady = !roomPersistResult?.error;
     }
 
-    roomService.joinRoomMember({
-      roomId,
-      userId: newUser.userId,
-      socketId: socket.id,
-      username,
-      role: newUser.role,
-      isPaused: newUser.isPaused
-    });
+    if (roomPersistenceReady) {
+      await roomService.joinRoomMember({
+        roomId,
+        userId: newUser.userId,
+        socketId: socket.id,
+        username,
+        role: newUser.role,
+        isPaused: newUser.isPaused
+      });
+    }
 
     // Send current room state to the joining user
     socket.emit('room-joined', {
