@@ -4,43 +4,64 @@ A focused workspace for people who need to write code together in real time: int
 
 Collaborative Platform gives each room a shared Monaco editor, live cursors, chat, owner controls, runnable code, structured AI review, and a small DSA practice flow. The important bit is that editing is not last-write-wins anymore: room text is merged through Yjs so multiple people can type at the same time without wiping each other out.
 
+## Screenshots
+
+### Home
+
+![Home](./.github/img/Home.png)
+
+### Join Room
+
+![Join Room](./.github/img/JoinRoom.png)
+
+### Code Compile
+
+![Code Compile](./.github/img/CodeCompile.png)
+
+### Complexity Analysis
+
+![Complexity](./.github/img/Complexity.png)
+
+### AI Quality Analysis
+
+![AI Quality](./.github/img/AI%20Qulity.png)
+
 ## Why It Matters
 
 Most lightweight collaborative editors fall apart at the exact moment two people type together. This project is built around that moment. The editor uses CRDT document updates over the existing Socket.IO connection, while room presence, chat, roles, compiler access, and problem workflow stay on the same real-time channel.
 
 The result is a small but serious collaborative coding room:
 
-- everyone in the room can edit at the same time
-- remote cursors move independently from text updates
-- compiler runs are protected by room-issued execution tokens
-- AI feedback is structured into fixes, quality, and complexity
-- owners can pause, unpause, kick, transfer ownership, and manage problems
-- the interface supports polished light and dark modes
+* everyone in the room can edit at the same time
+* remote cursors move independently from text updates
+* compiler runs are protected by room-issued execution tokens
+* AI feedback is structured into fixes, quality, and complexity
+* owners can pause, unpause, kick, transfer ownership, and manage problems
+* the interface supports polished light and dark modes
 
 ## Feature Snapshot
 
-- Real-time collaborative Monaco editor powered by Yjs
-- Socket.IO rooms with live roster, chat, cursor presence, and ownership
-- Short room codes for quick create/join flows
-- Room owner controls: pause, unpause, kick, transfer ownership
-- JDoodle code execution for supported languages
-- OpenRouter AI analyzer with tabbed structured output
-- Built-in DSA problem selection, reset, submit, and solved flow
-- Supabase auth support for signed-in AI analysis
-- Optional Supabase server-side persistence for rooms, members, chat, snapshots, and solved records
-- Professional responsive UI with light and dark themes
-- Graphify output in `graphify-out/` for codebase understanding
+* Real-time collaborative Monaco editor powered by Yjs
+* Socket.IO rooms with live roster, chat, cursor presence, and ownership
+* Short room codes for quick create/join flows
+* Room owner controls: pause, unpause, kick, transfer ownership
+* JDoodle code execution for supported languages
+* OpenRouter AI analyzer with tabbed structured output
+* Built-in DSA problem selection, reset, submit, and solved flow
+* Supabase auth support for signed-in AI analysis
+* Optional Supabase server-side persistence for rooms, members, chat, snapshots, and solved records
+* Professional responsive UI with light and dark themes
 
 ## Stack
 
-| Area | Tech |
-| --- | --- |
-| Client | React 18, Vite, Tailwind CSS, Monaco Editor, y-monaco, Socket.IO client |
-| Server | Node.js, Express, Socket.IO, Yjs, Helmet, rate limiting |
-| Compiler | JDoodle API |
-| AI review | OpenRouter |
-| Auth and persistence | Supabase, optional service-role-backed persistence |
-| Tooling | Node test runner, Supertest, ESLint, Graphify |
+| Area                 | Tech                                                                    |
+| -------------------- | ----------------------------------------------------------------------- |
+| Client               | React 18, Vite, Tailwind CSS, Monaco Editor, y-monaco, Socket.IO client |
+| Server               | Node.js, Express, Socket.IO, Yjs, Helmet, rate limiting                 |
+| Compiler             | JDoodle API                                                             |
+| AI review            | OpenRouter                                                              |
+| Auth and persistence | Supabase, optional service-role-backed persistence                      |
+| Tooling              | Node test runner, Supertest, ESLint                                     |
 
 ## Project Layout
 
@@ -60,9 +81,6 @@ server/
   executionToken.js         # room compiler token signing/verification
   validators.js             # shared request and socket validation
   test/                     # route, provider, token, Yjs, and validator tests
-supabase/
-  migrations/               # database schema and RLS policies
-graphify-out/               # generated architecture graph and wiki
 ```
 
 ## How Collaboration Works
@@ -84,12 +102,12 @@ The server keeps one `Y.Doc` per active room and sends `documentState` to late j
 
 ### Requirements
 
-- Node.js 18+
-- npm
-- A browser
-- JDoodle credentials for compiler execution
-- OpenRouter key for hosted AI analysis
-- Supabase project if you want auth or persistence
+* Node.js 18+
+* npm
+* A browser
+* JDoodle credentials for compiler execution
+* OpenRouter key for hosted AI analysis
+* Supabase project if you want auth or persistence
 
 ### Install
 
@@ -140,9 +158,9 @@ ANALYSIS_FALLBACK_ON_ERROR=true
 
 Notes:
 
-- `SUPABASE_SERVICE_ROLE_KEY` belongs on the server only. Never expose it in the client.
-- If the service role key is missing, the app still works in memory; Supabase room persistence is skipped.
-- `EXECUTION_TOKEN_SECRET` should stay stable across restarts and server instances so compiler tokens verify consistently.
+* `SUPABASE_SERVICE_ROLE_KEY` belongs on the server only. Never expose it in the client.
+* If the service role key is missing, the app still works in memory; Supabase room persistence is skipped.
+* `EXECUTION_TOKEN_SECRET` should stay stable across restarts and server instances so compiler tokens verify consistently.
 
 ### Client Environment
 
@@ -166,8 +184,8 @@ npm run dev
 
 Default local URLs:
 
-- Client: `http://localhost:5173`
-- Server: `http://localhost:3001`
+* Client: `http://localhost:5173`
+* Server: `http://localhost:3001`
 
 Run one side at a time:
 
@@ -182,7 +200,6 @@ npm run client:dev
 npm run server:test
 cd client && npm run lint
 npm run build
-node scripts/graphify-update.mjs .
 ```
 
 The production build intentionally code-splits Monaco into lazy chunks so the lobby stays light.
@@ -241,7 +258,10 @@ Requires Supabase auth. Sends code and optional compiler output to OpenRouter. T
     "score": 82,
     "grade": "B",
     "items": [
-      { "category": "Readability", "comment": "The function names are clear." }
+      {
+        "category": "Readability",
+        "comment": "The function names are clear."
+      }
     ]
   },
   "complexity": {
@@ -258,21 +278,21 @@ If OpenRouter is unavailable and fallback is enabled, the server returns the sam
 
 The main room events are:
 
-| Direction | Event | Purpose |
-| --- | --- | --- |
-| Client -> server | `join-room` | Join or create a room |
-| Server -> client | `room-joined` | Initial users, language, Yjs `documentState`, and execution token |
-| Client -> server | `document-update` | Yjs document delta for collaborative text editing |
-| Server -> client | `document-update` | Yjs delta broadcast to other room members |
-| Client -> server | `cursor-move` | Cursor and selection presence |
-| Server -> client | `cursor-updated` | Single-user cursor presence delta |
-| Server -> client | `presence-removed` | Remove a departed user's cursor |
-| Client -> server | `language-change` | Change language and optionally replace document text |
-| Server -> client | `language-updated` | Language and document replacement update |
-| Client -> server | `chat-message` | Send room chat |
-| Server -> client | `chat-received` | Receive room chat |
-| Client -> server | `pause-user`, `unpause-user`, `kick-user`, `transfer-ownership` | Owner controls |
-| Client -> server | `select-problem`, `select-random-problem`, `reset-problem`, `submit-solution`, `mark-solved` | Problem workflow |
+| Direction        | Event                                                                                        | Purpose                                                           |
+| ---------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Client -> server | `join-room`                                                                                  | Join or create a room                                             |
+| Server -> client | `room-joined`                                                                                | Initial users, language, Yjs `documentState`, and execution token |
+| Client -> server | `document-update`                                                                            | Yjs document delta for collaborative text editing                 |
+| Server -> client | `document-update`                                                                            | Yjs delta broadcast to other room members                         |
+| Client -> server | `cursor-move`                                                                                | Cursor and selection presence                                     |
+| Server -> client | `cursor-updated`                                                                             | Single-user cursor presence delta                                 |
+| Server -> client | `presence-removed`                                                                           | Remove a departed user's cursor                                   |
+| Client -> server | `language-change`                                                                            | Change language and optionally replace document text              |
+| Server -> client | `language-updated`                                                                           | Language and document replacement update                          |
+| Client -> server | `chat-message`                                                                               | Send room chat                                                    |
+| Server -> client | `chat-received`                                                                              | Receive room chat                                                 |
+| Client -> server | `pause-user`, `unpause-user`, `kick-user`, `transfer-ownership`                              | Owner controls                                                    |
+| Client -> server | `select-problem`, `select-random-problem`, `reset-problem`, `submit-solution`, `mark-solved` | Problem workflow                                                  |
 
 `code-change` still exists as a legacy compatibility path, but normal typing uses Yjs `document-update`.
 
@@ -334,9 +354,9 @@ The backend is using a public key for server writes or the service role key is m
 
 Rejoin the room after a server restart. Also verify:
 
-- `VITE_API_URL` points to the same server as `VITE_SOCKET_URL`
-- `EXECUTION_TOKEN_SECRET` is stable in production
-- the room token has not expired
+* `VITE_API_URL` points to the same server as `VITE_SOCKET_URL`
+* `EXECUTION_TOKEN_SECRET` is stable in production
+* the room token has not expired
 
 ### AI analysis requires sign-in
 
@@ -348,8 +368,7 @@ Check JDoodle credentials, selected language support, and JDoodle quota. The out
 
 ## Notes For Contributors
 
-- Keep realtime event contracts in sync between `server/index.js` and `client/src/pages/Editor.jsx`.
-- Do not put service role keys in client env files.
-- Run server tests before changing auth, execution, Yjs sync, or analyzer code.
-- Regenerate `graphify-out` after meaningful architecture changes.
-- Push commits to GitHub before expecting Render to redeploy.
+* Keep realtime event contracts in sync between `server/index.js` and `client/src/pages/Editor.jsx`.
+* Do not put service role keys in client env files.
+* Run server tests before changing auth, execution, Yjs sync, or analyzer code.
+* Push commits to GitHub before expecting Render to redeploy.
