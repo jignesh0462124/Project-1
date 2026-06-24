@@ -67,4 +67,4 @@ skills-lock.json
 !.github/img/**
 graphify-out/
 scripts/
-supabase/migrations/
+supabase
