@@ -61,3 +61,10 @@ temp/
 # Local Codex agent artifacts
 .agents/
 skills-lock.json
+# Local project planning, generated graph, and database setup artifacts
+.github/*
+!.github/img/
+!.github/img/**
+graphify-out/
+scripts/
+supabase/migrations/
